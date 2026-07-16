@@ -46,8 +46,18 @@ func TestWriteJSONRoundTrips(t *testing.T) {
 	if got.Target != "." || len(got.Findings) != 3 {
 		t.Errorf("round-trip mismatch: target=%q findings=%d", got.Target, len(got.Findings))
 	}
-	if got.Findings[0].RuleID != "eval-detected" {
-		t.Errorf("finding fields lost in round-trip: %+v", got.Findings[0])
+	// Findings are risk-ordered: the gitleaks secret (high + exposed-secret)
+	// outscores the semgrep high, which outscores the osv medium.
+	if got.Findings[0].RuleID != "github-pat" {
+		t.Errorf("Findings[0].RuleID = %q, want the highest-risk finding (github-pat) first", got.Findings[0].RuleID)
+	}
+	for i := 1; i < len(got.Findings); i++ {
+		if got.Findings[i-1].Risk.Score < got.Findings[i].Risk.Score {
+			t.Errorf("findings not risk-ordered: score %d before %d", got.Findings[i-1].Risk.Score, got.Findings[i].Risk.Score)
+		}
+	}
+	if f := got.Findings[0]; f.Risk.Score == 0 || len(f.Risk.Factors) == 0 {
+		t.Errorf("risk assessment lost in round-trip: %+v", f.Risk)
 	}
 	if got.GeneratedAt.IsZero() {
 		t.Error("generated_at missing from written report")

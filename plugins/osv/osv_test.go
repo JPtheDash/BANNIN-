@@ -26,7 +26,7 @@ if [ "$1" = "--version" ]; then
   exit 0
 fi
 cat <<'EOF'
-{"results":[{"source":{"path":"go.mod","type":"lockfile"},"packages":[{"package":{"name":"golang.org/x/sys","version":"0.29.0","ecosystem":"Go"},"vulnerabilities":[{"id":"GO-2026-5024","summary":"Integer overflow in NewNTUnicodeString","references":[{"type":"FIX","url":"https://go.dev/cl/770080"}],"database_specific":{"severity":"HIGH"}}]}]}]}
+{"results":[{"source":{"path":"go.mod","type":"lockfile"},"packages":[{"package":{"name":"golang.org/x/sys","version":"0.29.0","ecosystem":"Go"},"vulnerabilities":[{"id":"GO-2026-5024","aliases":["CVE-2026-47907"],"summary":"Integer overflow in NewNTUnicodeString","references":[{"type":"FIX","url":"https://go.dev/cl/770080"}],"database_specific":{"severity":"HIGH"}}]}]}]}
 EOF
 echo "diagnostic output" >&2
 exit 1
@@ -100,6 +100,9 @@ func TestRunAndParseEndToEnd(t *testing.T) {
 	}
 	if f.RuleID != "GO-2026-5024" {
 		t.Errorf("Finding.RuleID = %q, want the vuln id", f.RuleID)
+	}
+	if len(f.Aliases) != 1 || f.Aliases[0] != "CVE-2026-47907" {
+		t.Errorf("Finding.Aliases = %v, want the advisory's alias ids", f.Aliases)
 	}
 	if f.Severity != plugin.SeverityHigh {
 		t.Errorf("Finding.Severity = %q, want %q", f.Severity, plugin.SeverityHigh)

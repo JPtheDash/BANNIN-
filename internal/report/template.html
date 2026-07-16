@@ -88,12 +88,16 @@
     display: grid;
     /* minmax(0, …) lets long tokens (paths, advisory ids) wrap inside
        their column instead of crushing the neighboring one. */
-    grid-template-columns: 92px minmax(0, 1.7fr) minmax(0, 1fr);
+    grid-template-columns: 36px 92px minmax(0, 1.7fr) minmax(0, 1fr);
     align-items: baseline;
     gap: 10px;
     padding: 10px 14px;
     cursor: pointer;
     list-style: none;
+  }
+  .finding .score {
+    font-weight: 650; font-variant-numeric: tabular-nums;
+    text-align: right;
   }
   .finding summary::-webkit-details-marker { display: none; }
   .sev {
@@ -157,6 +161,7 @@
   {{range .Findings}}
   <details class="finding">
     <summary>
+      <span class="score" title="risk score">{{.Risk.Score}}</span>
       <span class="sev sev-{{.Severity}}"><span class="dot"></span>{{.Severity}}</span>
       <span class="title">{{.Title}}</span>
       <span class="where">{{.Scanner}}{{with .Location.Path}} · {{.}}{{end}}{{with .Location.StartLine}}:{{.}}{{end}}</span>
@@ -164,11 +169,16 @@
     <div class="body">
       {{with .Description}}<p>{{.}}</p>{{end}}
       <dl>
+        <dt>Risk score</dt>
+        <dd>{{.Risk.Score}}{{range .Risk.Factors}} · {{.Reason}} ({{if ge .Delta 0}}+{{end}}{{.Delta}}){{end}}</dd>
         <dt>Rule</dt><dd>{{.RuleID}}</dd>
+        {{with .Aliases}}<dt>Also known as</dt><dd>{{range $i, $a := .}}{{if $i}}, {{end}}{{$a}}{{end}}</dd>{{end}}
         {{with .CWE}}<dt>CWE</dt><dd>{{range $i, $c := .}}{{if $i}}, {{end}}{{$c}}{{end}}</dd>{{end}}
         {{with .Metadata}}
           {{$pkg := index . "package"}}{{$ver := index . "version"}}
           {{if $pkg}}<dt>Package</dt><dd>{{$pkg}}{{if $ver}}@{{$ver}}{{end}}</dd>{{end}}
+          {{$also := index . "also_reported_by"}}
+          {{if $also}}<dt>Also reported by</dt><dd>{{$also}}</dd>{{end}}
         {{end}}
         {{with .References}}
         <dt>References</dt>

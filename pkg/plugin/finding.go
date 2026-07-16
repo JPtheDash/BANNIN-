@@ -39,7 +39,13 @@ type Finding struct {
 	Scanner string `json:"scanner"`
 	// RuleID is the underlying tool's rule/check identifier (e.g. a
 	// Semgrep rule ID or a CVE for a dependency finding).
-	RuleID      string   `json:"rule_id"`
+	RuleID string `json:"rule_id"`
+	// Aliases lists alternate identifiers for the same underlying issue
+	// under other schemes (e.g. a GHSA advisory's CVE and PYSEC ids).
+	// internal/correlation uses these to recognize one advisory reported
+	// by multiple scanners; plugins populate them when the tool provides
+	// them.
+	Aliases     []string `json:"aliases,omitempty"`
 	Title       string   `json:"title"`
 	Description string   `json:"description,omitempty"`
 	Severity    Severity `json:"severity"`

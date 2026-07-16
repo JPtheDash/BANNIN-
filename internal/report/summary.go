@@ -44,6 +44,20 @@ func Summary(w io.Writer, r Report) {
 		}
 	}
 
+	// Findings arrive risk-ordered from New, so the head of the list is
+	// the answer to "what should I fix first".
+	fmt.Fprintln(w, "\n  Top risks:")
+	for i, f := range r.Findings {
+		if i == 3 {
+			break
+		}
+		where := f.Location.Path
+		if where == "" {
+			where = f.Scanner
+		}
+		fmt.Fprintf(w, "    %3d  %s  (%s)\n", f.Risk.Score, f.Title, where)
+	}
+
 	fmt.Fprintln(w, "\n  By scanner:")
 	scanners := make([]string, 0, len(byScanner))
 	for name := range byScanner {

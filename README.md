@@ -6,26 +6,35 @@ plugin interface, normalizes their output into one finding model,
 correlates and risk-scores it, and produces unified HTML/JSON/SARIF
 reports and a dashboard.
 
-## Status: Milestone 14 — parallel plugin execution
+## Status: Milestone 17 — risk scoring
 
-`internal/scheduler` now provides `Map`, a generic order-preserving
-worker pool: results[i] always corresponds to items[i] regardless of
-completion order, so scan output stays deterministic. `Manager.Scan`
-delegates fan-out to it and runs all configured plugins concurrently
-(they spend their time waiting on external tool subprocesses).
-Cancellation flows through the context — plugins already use
-`exec.CommandContext`, so a cancelled scan kills the tool processes.
-Alongside this, `runOne` now contains plugin panics: a third-party
-plugin that panics becomes its own failed `Result` instead of killing
-the process — which unrecovered goroutine panics otherwise would.
+Reports are now prioritized work lists, not severity dumps.
+`internal/risk.Assess` gives every finding a 0–100 score built from
+signals the pipeline already carries: a severity baseline (critical 90
+/ high 70 / medium 50 / low 30 / info 10) adjusted by cross-scanner
+corroboration (+10, from M16's `also_reported_by`), exposed secrets
+(+15 — a leaked credential needs no exploit), runtime-confirmed DAST
+findings (+10, a URL location means reachability was observed, not
+assumed), fix availability (+5, an upgrade path exists), and
+test/example/vendored paths (−15, matched as whole segments so
+`demo-app` never counts as `demo`).
 
-Verified with the race detector across the full test suite, and A/B
-benchmarked honestly (same binary, same warm tool caches, workers=1 vs
-unlimited): a four-plugin scan of `./examples/demo-app` dropped from
-9.7s to 5.2s (~1.9x; bounded by the slowest tool, with CPU utilization
-rising 37% → 68%). The first naive measurement showed a misleading
-"65s → 8.5s" — that was almost entirely tool-cache warm-up, which is
-why the A/B was done.
+The score is never a black box: it is exactly the sum of its factors,
+each shipped with the finding as `risk.factors` (name, delta, reason)
+in `report.json` and rendered inline in the HTML ("critical severity
+baseline (+90) · independently reported by trivy (+10) · …"). It is a
+prioritization aid layered on top of severity — no reachability
+analysis or exploit-intelligence feeds are involved, and severity
+remains the dominant signal by construction.
+
+`report.New` wraps each finding with its assessment (an additive JSON
+schema change: entries gain a `risk` object) and orders findings
+highest score first; ties keep the pipeline's deterministic severity
+sort. The CLI summary gained a "Top risks" section, and the HTML
+report shows the score beside each finding. The policy gate still
+operates on severity, unchanged. `plugin.Finding` itself is untouched
+— risk is computed downstream, exactly the consumer M11 designed the
+normalized collection for.
 
 See `docs/architecture.md` for the hexagonal architecture this
 skeleton is built toward.
@@ -100,17 +109,24 @@ skeleton is built toward.
 - **One findings pipeline feeds every consumer** — after the plugins
   run, results flow merge (`internal/scanner.Collect`) → severity
   normalization (`plugin.NormalizeFindings`; unrecognized clamps to
-  medium) → exact-duplicate removal (`internal/correlation.Dedupe`) →
-  deterministic severity sort (`plugin.SortFindings`). Everything
-  downstream — the CLI summary, `report.json`, the policy gate, and
-  later HTML/SARIF, dashboard, notifications, AI summaries — consumes
-  this same normalized `[]Finding`. `Finding`/`Location` carry stable
-  snake_case JSON tags; that schema is the exporter contract.
-- **Dedupe is deliberately conservative** — it collapses only literal
-  duplicates (same rule ID, location, and affected package). The same
-  advisory under different identifiers (OSV's `GO-…` vs Trivy's
-  `CVE-…`) survives as two findings; alias reconciliation is real
-  correlation work, a later milestone.
+  medium) → path normalization (`correlation.NormalizePaths`; before
+  the correlation passes, which compare locations literally) →
+  exact-duplicate removal (`correlation.Dedupe`) → alias
+  reconciliation (`correlation.ReconcileAliases`) → deterministic
+  severity sort (`plugin.SortFindings`). Everything downstream — the
+  CLI summary, `report.json`, the policy gate, and later dashboard,
+  notifications, AI summaries — consumes this same normalized
+  `[]Finding`. `Finding`/`Location` carry stable snake_case JSON tags;
+  that schema is the exporter contract.
+- **Correlation merges on evidence, never heuristics** — `Dedupe`
+  collapses only literal duplicates (same rule ID, location, affected
+  package). `ReconcileAliases` merges the same advisory under different
+  identifier schemes (OSV's `GHSA-`/`PYSEC-`/`GO-…` vs Trivy's `CVE-…`)
+  only when the databases' own alias lists link them, and only within
+  the same package, version, and location. A merged finding keeps the
+  most severe member's severity (scanners disagreeing is a reason to
+  err louder, not quieter) and records agreement in
+  `also_reported_by`.
 - **Severity ordering lives on the domain model** — `Severity.Rank()`
   in `pkg/plugin`, because both sorting and the policy gate need it and
   third-party plugin authors should see the same ordering the core
@@ -126,9 +142,11 @@ skeleton is built toward.
   vulnerability databases. Severity colors never carry meaning alone
   (every badge pairs the color with the severity word), and the file is
   fully self-contained for archiving from CI.
-- **The first four plugins (`semgrep`, `osv`, `trivy`, `gitleaks`) are
-  implemented** — `checkov` and `zap` are later milestones. Adding one
-  now would violate the "one milestone at a time" build order.
+- **All six planned plugins are implemented** — `semgrep`, `osv`,
+  `trivy`, `gitleaks` run in the default `scan.plugins`; `checkov` and
+  `zap` are opt-in (a default scan must not fail for users without
+  checkov installed, and zap needs a running app's URL as its target
+  rather than a directory).
 
 ## Layout
 
@@ -139,7 +157,7 @@ internal/
   parser/                 raw tool output -> intermediate records
   policy/                  pass/fail gating rules (fail_on_severity implemented)
   risk/                     risk scoring
-  correlation/               cross-scanner finding correlation (exact dedupe implemented)
+  correlation/               path normalization, exact dedupe, alias reconciliation
   report/                     HTML/JSON/SARIF rendering (HTML + JSON + CLI summary implemented)
   dashboard/                   local web UI backend
   storage/                      SQLite (later Postgres) persistence
@@ -151,7 +169,7 @@ internal/
 pkg/
   plugin/                 Scanner interface + Finding model (port, implemented)
 plugins/
-  semgrep/ osv/ trivy/ gitleaks/ (implemented)  checkov/ zap/ (driven adapters)
+  semgrep/ osv/ trivy/ gitleaks/ checkov/ zap/   (all six implemented)
 api/
   server/                 HTTP API adapter for the dashboard
 web/                      React + Vite + Tailwind dashboard frontend
@@ -208,23 +226,24 @@ Completed:
 - [x] M12 — policy engine (`fail_on_severity` CI gate, exit codes)
 - [x] M13 — self-contained HTML report
 - [x] M14 — parallel plugin execution (`internal/scheduler`)
+- [x] M21 — Checkov plugin (IaC scanning; opt-in via `scan.plugins`)
+- [x] M22 — OWASP ZAP plugin (DAST; opt-in, takes a URL target —
+      live verification pending a machine with ZAP or Docker)
+- [x] M16 — correlation v2: alias reconciliation across identifier
+      schemes (CVE/GHSA/PYSEC/GO-…) and finding paths normalized
+      relative to the scan target
+- [x] M17 — risk scoring (`internal/risk`): explainable 0–100 score
+      per finding; reports and CLI summary are risk-ordered
 
-Remaining (proposed order — each one milestone at a time):
+Remaining (in the order they'll be built — M15 deliberately last):
 
+- [ ] M18 — dashboard backend (`internal/dashboard` + `api/server`
+      HTTP adapter)
+- [ ] M19 — dashboard frontend (`web/`: React + Vite + Tailwind)
+- [ ] M20 — auth (`internal/auth`) for the API/dashboard
 - [ ] M15 — scan history: persist each Report to SQLite
       (`internal/storage`; `storage.driver`/`dsn` config is loaded but
       unused today)
-- [ ] M16 — correlation v2: reconcile the same advisory across
-      identifier schemes (CVE/GHSA/GO-…), normalize finding paths
-      relative to the scan target
-- [ ] M17 — risk scoring (`internal/risk`): weight findings beyond raw
-      severity (reachability, fix availability, exposure)
-- [ ] M18 — dashboard backend (`internal/dashboard` + `api/server`
-      HTTP adapter over stored scan history)
-- [ ] M19 — dashboard frontend (`web/`: React + Vite + Tailwind)
-- [ ] M20 — auth (`internal/auth`) for the API/dashboard
-- [ ] M21 — Checkov plugin (IaC scanning)
-- [ ] M22 — OWASP ZAP plugin (DAST)
 
 Deferred / on request: SARIF export (HTML + JSON cover current needs),
 a `scan.concurrency` config knob, per-plugin timeouts, Postgres storage

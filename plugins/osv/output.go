@@ -28,6 +28,7 @@ type osvPackageInfo struct {
 
 type osvVulnerability struct {
 	ID               string              `json:"id"`
+	Aliases          []string            `json:"aliases"`
 	Summary          string              `json:"summary"`
 	Details          string              `json:"details"`
 	References       []osvReference      `json:"references"`

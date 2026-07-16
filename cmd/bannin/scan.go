@@ -63,15 +63,23 @@ report.output_dir (when "json" is among report.formats).`,
 			logger.Info("plugin finished", zap.String("plugin", r.Plugin), zap.Int("findings", len(r.Findings)))
 		}
 
-		// The findings pipeline: merge -> normalize -> dedupe -> sort.
-		// Every downstream consumer (report.json now; HTML/SARIF,
-		// dashboard, policy later) sees this same collection.
+		// The findings pipeline: merge -> normalize severities ->
+		// normalize paths -> dedupe -> reconcile aliases -> sort. Every
+		// downstream consumer (reports now; dashboard, risk scoring
+		// later) sees this same collection. Paths normalize before the
+		// correlation passes because both compare locations literally.
 		findings := scanner.Collect(results)
 		findings = plugin.NormalizeFindings(findings)
+		correlation.NormalizePaths(findings, cfg.Scan.Target)
 		before := len(findings)
 		findings = correlation.Dedupe(findings)
 		if removed := before - len(findings); removed > 0 {
 			logger.Info("deduplicated findings", zap.Int("removed", removed))
+		}
+		before = len(findings)
+		findings = correlation.ReconcileAliases(findings)
+		if merged := before - len(findings); merged > 0 {
+			logger.Info("reconciled alias findings", zap.Int("merged", merged))
 		}
 		plugin.SortFindings(findings)
 

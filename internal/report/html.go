@@ -76,7 +76,7 @@ func WriteHTML(dir string, r Report) (string, error) {
 
 // severityTiles returns one tile per severity, most severe first, zeros
 // included so the tile row's layout is stable across reports.
-func severityTiles(findings []plugin.Finding) []severityTile {
+func severityTiles(findings []Finding) []severityTile {
 	counts := make(map[plugin.Severity]int)
 	for _, f := range findings {
 		counts[f.Severity]++

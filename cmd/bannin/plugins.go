@@ -2,10 +2,12 @@ package main
 
 import (
 	"github.com/jyotidash/bannin/internal/scanner"
+	"github.com/jyotidash/bannin/plugins/checkov"
 	"github.com/jyotidash/bannin/plugins/gitleaks"
 	"github.com/jyotidash/bannin/plugins/osv"
 	"github.com/jyotidash/bannin/plugins/semgrep"
 	"github.com/jyotidash/bannin/plugins/trivy"
+	"github.com/jyotidash/bannin/plugins/zap"
 )
 
 // registerPlugins wires concrete Scanner implementations into registry.
@@ -18,6 +20,8 @@ func registerPlugins(registry *scanner.Registry) {
 	registry.Register(osv.New())
 	registry.Register(trivy.New())
 	registry.Register(gitleaks.New())
+	registry.Register(checkov.New())
+	registry.Register(zap.New())
 }
 
 func init() {
