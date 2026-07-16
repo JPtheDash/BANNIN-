@@ -48,6 +48,13 @@ type ServerConfig struct {
 	// (Viper binds it below) so it never has to live in bannin.yaml.
 	// Empty disables auth — fine on 127.0.0.1, risky on anything else.
 	AuthToken string `mapstructure:"auth_token"`
+	// WebDir is a directory of built dashboard assets (the output of
+	// `npm run build`, i.e. web/dist) that `bannin serve` serves
+	// alongside the API on the same origin, so the whole tool is one
+	// process on one port with no separate dev server. Empty means
+	// serve auto-detects ./web/dist and, failing that, serves the API
+	// only.
+	WebDir string `mapstructure:"web_dir"`
 }
 
 type LoggingConfig struct {

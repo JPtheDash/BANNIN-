@@ -6,6 +6,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -432,4 +434,89 @@ func TestTriggerScanRunsInBackgroundAndReportsFailure(t *testing.T) {
 		time.Sleep(20 * time.Millisecond)
 	}
 	t.Fatalf("job never left \"running\" within the test deadline (last status %q)", status)
+}
+
+// writeStaticDir builds a minimal built-dashboard directory: an
+// index.html shell and one asset file.
+func writeStaticDir(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "index.html"), []byte("<!doctype html><title>BANNIN</title>"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "app.js"), []byte("console.log('bannin')"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
+func TestStaticServesIndexAndAssets(t *testing.T) {
+	srv := httptest.NewServer(server.New(fakeStore{}, nil, "").WithStaticDir(writeStaticDir(t)).Handler())
+	defer srv.Close()
+
+	cases := []struct {
+		path string
+		want string
+	}{
+		{"/", "<title>BANNIN</title>"},         // index at root
+		{"/app.js", "console.log('bannin')"},   // a real asset
+		{"/findings", "<title>BANNIN</title>"}, // SPA deep link → index fallback
+	}
+	for _, c := range cases {
+		resp, err := http.Get(srv.URL + c.path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		b, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Errorf("GET %s = %d, want 200", c.path, resp.StatusCode)
+		}
+		if !strings.Contains(string(b), c.want) {
+			t.Errorf("GET %s body = %q, want it to contain %q", c.path, b, c.want)
+		}
+	}
+}
+
+// TestStaticAssetsBypassAuthButAPIStillProtected confirms serving the
+// dashboard shell doesn't require a token (you can't reach a login
+// otherwise) while every /api/ route still does.
+func TestStaticAssetsBypassAuthButAPIStillProtected(t *testing.T) {
+	srv := httptest.NewServer(server.New(fakeStore{}, nil, "secret").WithStaticDir(writeStaticDir(t)).Handler())
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("GET / with auth on = %d, want 200 (static shell must load without a token)", resp.StatusCode)
+	}
+
+	resp, err = http.Get(srv.URL + "/api/v1/report")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Errorf("GET /api/v1/report with auth on = %d, want 401", resp.StatusCode)
+	}
+}
+
+// TestNoStaticDirLeavesAPIUnaffected guards the default: without
+// WithStaticDir the catch-all is never mounted, so an unknown path 404s
+// rather than serving anything.
+func TestNoStaticDirLeavesAPIUnaffected(t *testing.T) {
+	srv := httptest.NewServer(server.New(fakeStore{}, nil, "").Handler())
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/not-an-api-route")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Errorf("GET /not-an-api-route with no static dir = %d, want 404", resp.StatusCode)
+	}
 }

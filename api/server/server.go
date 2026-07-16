@@ -5,12 +5,14 @@
 // stored, so Milestone 15 (persistent scan history) can change the
 // backing store without this package changing.
 //
-// There is no CORS handling yet — that belongs to a later milestone
-// once there's a concrete non-dev frontend origin to allow (the dev
-// server proxies instead, see web/vite.config.ts). Bind server.host to
-// 127.0.0.1 (the default) unless you already have another way to
-// restrict access, and set server.auth_token (Milestone 20) if the
-// port is reachable by anyone you don't trust.
+// The server can also front the built dashboard on its own origin (see
+// WithStaticDir), so the whole tool runs as one process on one port
+// with no CORS to configure — the browser sees the UI and the API as
+// same-origin. (During frontend development the vite dev server proxies
+// instead, see web/vite.config.ts.) Bind server.host to 127.0.0.1 (the
+// default) unless you already have another way to restrict access, and
+// set server.auth_token (Milestone 20) if the port is reachable by
+// anyone you don't trust.
 package server
 
 import (
@@ -19,6 +21,8 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -47,6 +51,10 @@ type Server struct {
 	jobs     map[string]*scanJob
 	jobSeq   atomic.Int64
 	scanning atomic.Bool // single-flight: one on-demand scan at a time
+
+	// staticDir, if non-empty, is a directory of built dashboard assets
+	// served on the same origin as the API (see WithStaticDir).
+	staticDir string
 }
 
 // New returns a Server reading report data from store. A nil logger
@@ -62,6 +70,15 @@ func New(store dashboard.Store, logger *zap.Logger, authToken string) *Server {
 	return &Server{store: store, logger: logger, authToken: authToken, jobs: make(map[string]*scanJob)}
 }
 
+// WithStaticDir makes Handler also serve the built dashboard assets in
+// dir on the same origin as the API — one process, one port, no
+// separate dev server. Returns the receiver for chaining. An empty dir
+// leaves the server API-only (the previous behavior).
+func (s *Server) WithStaticDir(dir string) *Server {
+	s.staticDir = dir
+	return s
+}
+
 // Handler returns the API's http.Handler, ready to pass to
 // http.ListenAndServe or httptest.NewServer.
 func (s *Server) Handler() http.Handler {
@@ -73,16 +90,44 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/reports/{id}", s.handleGetReport)
 	mux.HandleFunc("POST /api/v1/scan", s.handleTriggerScan)
 	mux.HandleFunc("GET /api/v1/scans/{id}", s.handleScanStatus)
+	// The built dashboard is served as the catch-all so any route the
+	// API doesn't own (/, /findings, static assets) goes to the SPA. A
+	// more specific pattern always wins in net/http's mux, so the API
+	// routes above are unaffected.
+	if s.staticDir != "" {
+		mux.Handle("/", s.spaHandler())
+	}
 	return s.requireAuth(mux)
 }
 
-// requireAuth enforces the Bearer token on every request except
-// /healthz, which stays open so load balancers and `docker healthcheck`
-// don't need a credential just to confirm the process is up — it
-// reveals nothing beyond "the process is running".
+// spaHandler serves files from staticDir, falling back to index.html
+// for any path that isn't an existing file so client-side routing
+// (react-router) works on deep links and page reloads.
+func (s *Server) spaHandler() http.Handler {
+	fs := http.FileServer(http.Dir(s.staticDir))
+	index := filepath.Join(s.staticDir, "index.html")
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// filepath.Join cleans the path, so a served file can never
+		// escape staticDir; anything that doesn't resolve to a real file
+		// falls through to index.html (never an arbitrary path).
+		p := filepath.Join(s.staticDir, filepath.Clean(r.URL.Path))
+		if info, err := os.Stat(p); err == nil && !info.IsDir() {
+			fs.ServeHTTP(w, r)
+			return
+		}
+		http.ServeFile(w, r, index)
+	})
+}
+
+// requireAuth enforces the Bearer token on every /api/ request. The
+// health check and the static dashboard assets stay open: /healthz so
+// load balancers and `docker healthcheck` can confirm the process is up
+// without a credential, and the assets because the SPA shell reveals
+// nothing on its own — every request for actual findings goes through
+// the protected /api/ routes.
 func (s *Server) requireAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if s.authToken == "" || r.URL.Path == "/healthz" {
+		if s.authToken == "" || !strings.HasPrefix(r.URL.Path, "/api/") {
 			next.ServeHTTP(w, r)
 			return
 		}

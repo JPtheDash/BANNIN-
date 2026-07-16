@@ -13,6 +13,7 @@ report.sarif
 *.log
 node_modules/
 /bannin-report/
+/bannin.yaml
 .DS_Store
 .claude/
 web/dist

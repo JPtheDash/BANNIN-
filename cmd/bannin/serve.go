@@ -3,6 +3,8 @@ package main
 import (
 	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
 
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
@@ -14,6 +16,21 @@ import (
 	"github.com/jyotidash/bannin/internal/logging"
 	"github.com/jyotidash/bannin/internal/storage"
 )
+
+// resolveWebDir picks the directory of built dashboard assets to serve.
+// A configured path wins (and is used even if it's currently empty, so
+// a typo surfaces as a 404 rather than silently serving nothing);
+// otherwise it auto-detects the conventional ./web/dist. Returns ""
+// when neither is present, leaving the server API-only.
+func resolveWebDir(configured string) string {
+	if configured != "" {
+		return configured
+	}
+	if _, err := os.Stat(filepath.Join("web", "dist", "index.html")); err == nil {
+		return filepath.Join("web", "dist")
+	}
+	return ""
+}
 
 var generateToken bool
 
@@ -75,10 +92,24 @@ report.json, which only ever holds the most recent scan.`,
 		}
 		srv := server.New(store, logger, cfg.Server.AuthToken)
 
+		// Serve the built dashboard on the same origin as the API when
+		// it's available, so the whole tool is one process on one port
+		// (no separate dev server). Prefer the configured path; else
+		// auto-detect the conventional web/dist next to the working dir.
+		webDir := resolveWebDir(cfg.Server.WebDir)
+		if webDir != "" {
+			srv.WithStaticDir(webDir)
+		}
+
 		addr := fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port)
-		logger.Info("dashboard API starting", zap.String("addr", addr), zap.String("report_dir", cfg.Report.OutputDir),
-			zap.Bool("auth_enabled", cfg.Server.AuthToken != ""), zap.Bool("history_enabled", historyEnabled))
-		fmt.Fprintf(cmd.OutOrStdout(), "Dashboard API listening on http://%s\n", addr)
+		logger.Info("dashboard starting", zap.String("addr", addr), zap.String("report_dir", cfg.Report.OutputDir),
+			zap.Bool("auth_enabled", cfg.Server.AuthToken != ""), zap.Bool("history_enabled", historyEnabled),
+			zap.String("web_dir", webDir))
+		if webDir != "" {
+			fmt.Fprintf(cmd.OutOrStdout(), "BANNIN dashboard: http://%s\n", addr)
+		} else {
+			fmt.Fprintf(cmd.OutOrStdout(), "Dashboard API listening on http://%s (no built UI found — run `npm run build` in web/, or use scripts/start-web.sh)\n", addr)
+		}
 
 		return http.ListenAndServe(addr, srv.Handler())
 	},

@@ -35,17 +35,19 @@ git clone https://github.com/JPtheDash/BANNIN-.git
 cd BANNIN-
 
 ./scripts/install-tools.sh   # installs the scanners (Semgrep, Trivy, OSV Scanner, Gitleaks, Checkov, ZAP)
-./scripts/start-web.sh       # builds BANNIN and opens the dashboard
+./scripts/start-web.sh       # builds BANNIN and opens the dashboard in your browser
 ```
 
-That's it — the dashboard opens at `http://localhost:5173`. Run a scan
-from the **New Scan** page, or from the CLI:
+That's it — `start-web.sh` builds everything, starts BANNIN, and opens
+the dashboard automatically. It's a single process on a single port
+(the dashboard and API are served together), so there's nothing else to
+run. Kick off a scan from the **New Scan** page, or from the CLI:
 
 ```bash
 ./bin/bannin scan
 ```
 
-Ctrl+C stops everything. Both scripts are safe to re-run.
+Ctrl+C stops it. Both scripts are safe to re-run.
 
 ## Using it in CI/CD
 
@@ -69,14 +71,18 @@ is a single self-contained file, safe to open from CI artifacts anywhere.
 
 ## Using the dashboard
 
-`./scripts/start-web.sh` starts everything for you. If you'd rather run
-the pieces yourself:
+`./scripts/start-web.sh` builds the dashboard, starts BANNIN, and opens
+your browser. If you'd rather run the pieces yourself:
 
 ```bash
-bannin scan --config bannin.yaml      # produces at least one scan
-bannin serve --config bannin.yaml     # starts the API
-cd web && npm install && npm run dev  # starts the dashboard
+bannin scan --config bannin.yaml     # produces at least one scan
+(cd web && npm install && npm run build)  # builds the dashboard (once)
+bannin serve --config bannin.yaml    # serves the dashboard + API on one port
 ```
+
+`bannin serve` serves the built dashboard from `web/dist` on the same
+port as the API, so the whole tool is one process — open the address it
+prints (default `http://127.0.0.1:8080`).
 
 The dashboard shows a security score, severity and category breakdowns,
 scan history, a searchable findings table with full detail per finding,
