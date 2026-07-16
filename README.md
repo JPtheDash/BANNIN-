@@ -31,8 +31,8 @@ findings list: deduplicated, risk-scored, and browsable.
 ## Get started in two commands
 
 ```bash
-git clone https://github.com/jyotidash/bannin.git
-cd bannin
+git clone https://github.com/JPtheDash/BANNIN-.git
+cd BANNIN-
 
 ./scripts/install-tools.sh   # installs the scanners (Semgrep, Trivy, OSV Scanner, Gitleaks, Checkov, ZAP)
 ./scripts/start-web.sh       # builds BANNIN and opens the dashboard
