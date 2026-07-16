@@ -91,7 +91,7 @@ func Load(path string) (*Config, error) {
 func setDefaults(v *viper.Viper) {
 	v.SetDefault("scan.target", ".")
 	v.SetDefault("scan.plugins", []string{"semgrep", "osv", "trivy", "gitleaks"})
-	v.SetDefault("report.formats", []string{"html", "json", "sarif"})
+	v.SetDefault("report.formats", []string{"html", "json"})
 	v.SetDefault("report.output_dir", "./bannin-report")
 	v.SetDefault("policy.fail_on_severity", "high")
 	v.SetDefault("storage.driver", "sqlite")

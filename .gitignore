@@ -9,3 +9,5 @@ report.sarif
 *.log
 node_modules/
 /bannin-report/
+.DS_Store
+.claude/

@@ -6,24 +6,29 @@ plugin interface, normalizes their output into one finding model,
 correlates and risk-scores it, and produces unified HTML/JSON/SARIF
 reports and a dashboard.
 
-## Status: Milestone 12 — policy engine (CI gate)
+## Status: Milestone 14 — parallel plugin execution
 
-`internal/policy` now evaluates the normalized findings against
-`policy.fail_on_severity` from config: `Evaluate` returns a `Decision`
-carrying every finding at or above the threshold, and `bannin scan`
-prints `Policy: PASS/FAIL` and exits nonzero on violations — making it
-usable as a CI quality gate. Setting `fail_on_severity: ""` disables
-gating (the default is `high`). An invalid threshold is an error, not a
-guess: a misconfigured gate that silently passed (or failed) everything
-would defeat the point. One deliberate precedence rule: a plugin that
-failed to run outranks a policy verdict — CI must not go green when
-part of the scan never happened.
+`internal/scheduler` now provides `Map`, a generic order-preserving
+worker pool: results[i] always corresponds to items[i] regardless of
+completion order, so scan output stays deterministic. `Manager.Scan`
+delegates fan-out to it and runs all configured plugins concurrently
+(they spend their time waiting on external tool subprocesses).
+Cancellation flows through the context — plugins already use
+`exec.CommandContext`, so a cancelled scan kills the tool processes.
+Alongside this, `runOne` now contains plugin panics: a third-party
+plugin that panics becomes its own failed `Result` instead of killing
+the process — which unrecovered goroutine panics otherwise would.
 
-Verified for real: scanning `./examples/demo-app` with the default gate
-prints `Policy: FAIL — 20 finding(s) at or above high severity` and
-exits 1; a clean directory prints `Policy: PASS` and exits 0; gating
-disabled skips the verdict and exits 0. See `docs/architecture.md` for
-the hexagonal architecture this skeleton is built toward.
+Verified with the race detector across the full test suite, and A/B
+benchmarked honestly (same binary, same warm tool caches, workers=1 vs
+unlimited): a four-plugin scan of `./examples/demo-app` dropped from
+9.7s to 5.2s (~1.9x; bounded by the slowest tool, with CPU utilization
+rising 37% → 68%). The first naive measurement showed a misleading
+"65s → 8.5s" — that was almost entirely tool-cache warm-up, which is
+why the A/B was done.
+
+See `docs/architecture.md` for the hexagonal architecture this
+skeleton is built toward.
 
 ## Architecture decisions (Milestone 1)
 
@@ -78,10 +83,15 @@ the hexagonal architecture this skeleton is built toward.
 - **`internal/logging`** wraps Zap behind `New(level, out)`, taking an
   explicit `zapcore.WriteSyncer` (nil defaults to stderr) so callers —
   and tests — can redirect output without touching globals.
-- **`internal/scanner.Manager` runs plugins sequentially, on purpose** —
-  parallel execution is `internal/scheduler`'s job (a later milestone).
-  `Manager.Resolve` is a separate step from `Manager.Scan` so an
-  unregistered/mistyped plugin name is caught before any tool runs.
+- **Concurrency policy lives in `internal/scheduler`, not the Manager** —
+  `scheduler.Map` is a generic, order-preserving worker pool;
+  `Manager.Scan` delegates fan-out to it and only defines what running
+  one plugin means. Results always arrive in input order, so output is
+  deterministic despite concurrent execution. `Manager.Resolve` stays a
+  separate step from `Manager.Scan` so an unregistered/mistyped plugin
+  name is caught before any tool runs, and `runOne` contains plugin
+  panics as failed Results (an unrecovered goroutine panic would kill
+  the process).
 - **Secrets never ride along in findings** — `plugins/gitleaks` always
   invokes the tool with `--redact`, doesn't model the report's
   Secret/Match fields at all, and has a test asserting that even an
@@ -109,6 +119,13 @@ the hexagonal architecture this skeleton is built toward.
   rejects an invalid threshold instead of guessing, and a plugin that
   failed to run outranks a passing policy verdict (CI must not go green
   when part of the scan never happened).
+- **Reports treat scanner output as hostile input** — `report.html` is
+  rendered exclusively through `html/template`'s contextual escaping
+  and ships zero JavaScript, because advisory descriptions, rule
+  titles, and reference URLs originate from scanned artifacts and
+  vulnerability databases. Severity colors never carry meaning alone
+  (every badge pairs the color with the severity word), and the file is
+  fully self-contained for archiving from CI.
 - **The first four plugins (`semgrep`, `osv`, `trivy`, `gitleaks`) are
   implemented** — `checkov` and `zap` are later milestones. Adding one
   now would violate the "one milestone at a time" build order.
@@ -123,10 +140,10 @@ internal/
   policy/                  pass/fail gating rules (fail_on_severity implemented)
   risk/                     risk scoring
   correlation/               cross-scanner finding correlation (exact dedupe implemented)
-  report/                     HTML/JSON/SARIF rendering (JSON + CLI summary implemented)
+  report/                     HTML/JSON/SARIF rendering (HTML + JSON + CLI summary implemented)
   dashboard/                   local web UI backend
   storage/                      SQLite (later Postgres) persistence
-  scheduler/                     parallel plugin execution
+  scheduler/                     parallel plugin execution (implemented)
   config/                         Viper/YAML config loader
   logging/                         Zap-backed structured logger
   auth/                             credentials / access control
@@ -174,8 +191,44 @@ Scanning requires the underlying tools on PATH (`brew install semgrep
 osv-scanner trivy gitleaks`); a missing tool fails that plugin's health
 check cleanly without stopping the others.
 
-## Next milestone
+## Roadmap
 
-Milestone 13 — HTML report rendering in `internal/report`: a
-self-contained `report.html` generated from the same `Report` envelope
-`report.json` uses, honoring `"html"` in `report.formats`.
+Completed:
+
+- [x] M1 — project skeleton (hexagonal layout, placeholder packages)
+- [x] M2 — Cobra CLI (`bannin scan`, `bannin version`, `--config`)
+- [x] M3 — config loader (Viper/YAML + validation, `internal/config`)
+- [x] M4 — structured logging (Zap, `internal/logging`)
+- [x] M5 — plugin port (`pkg/plugin`: `Scanner` interface, `Finding` model)
+- [x] M6 — scanner manager (`internal/scanner`: registry + execution)
+- [x] M7–M10 — first four plugins: Semgrep, OSV Scanner, Trivy,
+      Gitleaks, plus the intentionally-vulnerable `examples/demo-app`
+- [x] M11 — findings pipeline (merge → normalize → dedupe → sort;
+      CLI summary; `report.json`)
+- [x] M12 — policy engine (`fail_on_severity` CI gate, exit codes)
+- [x] M13 — self-contained HTML report
+- [x] M14 — parallel plugin execution (`internal/scheduler`)
+
+Remaining (proposed order — each one milestone at a time):
+
+- [ ] M15 — scan history: persist each Report to SQLite
+      (`internal/storage`; `storage.driver`/`dsn` config is loaded but
+      unused today)
+- [ ] M16 — correlation v2: reconcile the same advisory across
+      identifier schemes (CVE/GHSA/GO-…), normalize finding paths
+      relative to the scan target
+- [ ] M17 — risk scoring (`internal/risk`): weight findings beyond raw
+      severity (reachability, fix availability, exposure)
+- [ ] M18 — dashboard backend (`internal/dashboard` + `api/server`
+      HTTP adapter over stored scan history)
+- [ ] M19 — dashboard frontend (`web/`: React + Vite + Tailwind)
+- [ ] M20 — auth (`internal/auth`) for the API/dashboard
+- [ ] M21 — Checkov plugin (IaC scanning)
+- [ ] M22 — OWASP ZAP plugin (DAST)
+
+Deferred / on request: SARIF export (HTML + JSON cover current needs),
+a `scan.concurrency` config knob, per-plugin timeouts, Postgres storage
+driver, release/dist tooling. Housekeeping notes: `internal/parser` is
+vestigial (parsing lives in each plugin's `Parse`) and should be folded
+or removed when convenient; the repo has no LICENSE file yet — pick one
+before publicizing.

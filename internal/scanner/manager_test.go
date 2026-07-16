@@ -3,6 +3,7 @@ package scanner_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/jyotidash/bannin/internal/scanner"
@@ -98,6 +99,61 @@ func TestManagerScanEmptyRegistryUsesDefault(t *testing.T) {
 	mgr := scanner.NewManager(nil)
 	if _, err := mgr.Resolve([]string{"anything"}); err == nil {
 		t.Fatal("Resolve against an empty DefaultRegistry should error")
+	}
+}
+
+type panickyScanner struct{ fakeScanner }
+
+func (p *panickyScanner) Parse(raw plugin.RawResult) ([]plugin.Finding, error) {
+	panic("plugin bug: nil map write")
+}
+
+func TestManagerScanContainsPluginPanic(t *testing.T) {
+	bad := &panickyScanner{fakeScanner{name: "panicky"}}
+	good := &fakeScanner{name: "osv", findings: []plugin.Finding{{ID: "ok"}}}
+	r := scanner.NewRegistry()
+	r.Register(bad)
+	r.Register(good)
+	mgr := scanner.NewManager(r)
+
+	scanners, err := mgr.Resolve([]string{"panicky", "osv"})
+	if err != nil {
+		t.Fatalf("Resolve returned error: %v", err)
+	}
+
+	results := mgr.Scan(context.Background(), ".", scanners)
+	if len(results) != 2 {
+		t.Fatalf("Scan returned %d results, want 2", len(results))
+	}
+	if results[0].Err == nil || !strings.Contains(results[0].Err.Error(), "panicked") {
+		t.Errorf("panicking plugin's Result.Err = %v, want a panic error", results[0].Err)
+	}
+	if results[1].Err != nil || len(results[1].Findings) != 1 {
+		t.Errorf("healthy plugin affected by sibling panic: %+v", results[1])
+	}
+}
+
+func TestManagerScanResultsMatchScannerOrder(t *testing.T) {
+	a := &fakeScanner{name: "a"}
+	b := &fakeScanner{name: "b"}
+	c := &fakeScanner{name: "c"}
+	r := scanner.NewRegistry()
+	r.Register(b)
+	r.Register(c)
+	r.Register(a)
+	mgr := scanner.NewManager(r)
+
+	scanners, err := mgr.Resolve([]string{"c", "a", "b"})
+	if err != nil {
+		t.Fatalf("Resolve returned error: %v", err)
+	}
+
+	results := mgr.Scan(context.Background(), ".", scanners)
+	want := []string{"c", "a", "b"}
+	for i, name := range want {
+		if results[i].Plugin != name {
+			t.Fatalf("results[%d].Plugin = %q, want %q (concurrent Scan must keep input order)", i, results[i].Plugin, name)
+		}
 	}
 }
 

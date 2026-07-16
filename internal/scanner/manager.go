@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/jyotidash/bannin/internal/scheduler"
 	"github.com/jyotidash/bannin/pkg/plugin"
 )
 
@@ -17,8 +18,8 @@ type Result struct {
 }
 
 // Manager resolves configured plugin names against a Registry and drives
-// them against a target. Parallel execution is internal/scheduler's job
-// (a later milestone); Manager runs plugins sequentially.
+// them against a target. Concurrency policy lives in internal/scheduler;
+// Manager only defines what running one plugin means.
 type Manager struct {
 	registry *Registry
 }
@@ -55,15 +56,15 @@ func (m *Manager) Resolve(names []string) ([]plugin.Scanner, error) {
 	return scanners, nil
 }
 
-// Scan runs each of the given scanners against target in sequence,
-// collecting one Result per plugin regardless of whether earlier plugins
-// failed.
+// Scan runs the given scanners against target concurrently (they spend
+// their time waiting on external tool subprocesses, so they all run at
+// once), collecting one Result per plugin regardless of failures.
+// Results arrive in the same order as scanners, so output stays
+// deterministic even though completion order isn't.
 func (m *Manager) Scan(ctx context.Context, target string, scanners []plugin.Scanner) []Result {
-	results := make([]Result, 0, len(scanners))
-	for _, s := range scanners {
-		results = append(results, runOne(ctx, target, s))
-	}
-	return results
+	return scheduler.Map(ctx, 0, scanners, func(ctx context.Context, s plugin.Scanner) Result {
+		return runOne(ctx, target, s)
+	})
 }
 
 // Collect merges every successful Result's findings into one slice — the
@@ -82,8 +83,18 @@ func Collect(results []Result) []plugin.Finding {
 	return findings
 }
 
-func runOne(ctx context.Context, target string, s plugin.Scanner) Result {
+func runOne(ctx context.Context, target string, s plugin.Scanner) (res Result) {
 	name := s.Name()
+
+	// A plugin is third-party code driving an external tool; if it
+	// panics it must fail as its own Result, not take down the whole
+	// scan — especially now that plugins run on concurrent goroutines,
+	// where an unrecovered panic kills the process.
+	defer func() {
+		if r := recover(); r != nil {
+			res = Result{Plugin: name, Err: fmt.Errorf("plugin panicked: %v", r)}
+		}
+	}()
 
 	if err := s.HealthCheck(ctx); err != nil {
 		return Result{Plugin: name, Err: fmt.Errorf("health check: %w", err)}

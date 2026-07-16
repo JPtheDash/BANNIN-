@@ -86,7 +86,9 @@
   }
   .finding summary {
     display: grid;
-    grid-template-columns: 92px 1fr auto;
+    /* minmax(0, …) lets long tokens (paths, advisory ids) wrap inside
+       their column instead of crushing the neighboring one. */
+    grid-template-columns: 92px minmax(0, 1.7fr) minmax(0, 1fr);
     align-items: baseline;
     gap: 10px;
     padding: 10px 14px;
@@ -114,7 +116,7 @@
     font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em;
     color: var(--muted); margin-top: 10px;
   }
-  .finding .body dd { margin: 2px 0 0; }
+  .finding .body dd { margin: 2px 0 0; overflow-wrap: anywhere; }
   .finding .body a { color: inherit; }
   .empty {
     background: var(--surface); border: 1px solid var(--hairline);
