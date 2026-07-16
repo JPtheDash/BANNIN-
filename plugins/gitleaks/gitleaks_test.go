@@ -142,9 +142,11 @@ func TestParseNeverCarriesSecretValues(t *testing.T) {
 	// operator ran the tool by hand and fed the output in), Parse must
 	// not copy it into any Finding field.
 	p := New()
-	// A syntactically valid but fabricated token (never a real
-	// credential), needed to prove Parse won't propagate one.
-	leaked := "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" // gitleaks:allow
+	// This value is hand-fed to Parse() directly, never through the
+	// real gitleaks binary or scanned by anything — it doesn't need to
+	// match a real provider's token format, so it's kept unambiguously
+	// non-credential-shaped on purpose.
+	leaked := "not-a-real-secret-value-for-redaction-test-only"
 	raw := plugin.RawResult{
 		ExitCode: 1,
 		Output:   []byte(`[{"RuleID":"github-pat","Description":"desc","StartLine":1,"EndLine":1,"Match":"` + leaked + `","Secret":"` + leaked + `","File":"config.py","Fingerprint":"config.py:github-pat:1"}]`),

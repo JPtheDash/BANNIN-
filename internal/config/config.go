@@ -14,6 +14,7 @@ type Config struct {
 	Report  ReportConfig  `mapstructure:"report"`
 	Policy  PolicyConfig  `mapstructure:"policy"`
 	Storage StorageConfig `mapstructure:"storage"`
+	Server  ServerConfig  `mapstructure:"server"`
 	Logging LoggingConfig `mapstructure:"logging"`
 }
 
@@ -34,6 +35,19 @@ type PolicyConfig struct {
 type StorageConfig struct {
 	Driver string `mapstructure:"driver"`
 	DSN    string `mapstructure:"dsn"`
+}
+
+// ServerConfig configures the `bannin serve` dashboard API (Milestone
+// 18). It reads reports from Report.OutputDir; it does not run scans.
+type ServerConfig struct {
+	Host string `mapstructure:"host"`
+	Port int    `mapstructure:"port"`
+	// AuthToken, if set, is required as a Bearer credential on every
+	// dashboard API request except /healthz (internal/auth,
+	// Milestone 20). Also settable via the BANNIN_AUTH_TOKEN env var
+	// (Viper binds it below) so it never has to live in bannin.yaml.
+	// Empty disables auth — fine on 127.0.0.1, risky on anything else.
+	AuthToken string `mapstructure:"auth_token"`
 }
 
 type LoggingConfig struct {
@@ -59,6 +73,10 @@ func Load(path string) (*Config, error) {
 	v := viper.New()
 	setDefaults(v)
 	v.SetConfigType("yaml")
+	v.SetEnvPrefix("bannin")
+	if err := v.BindEnv("server.auth_token", "BANNIN_AUTH_TOKEN"); err != nil {
+		return nil, fmt.Errorf("config: binding BANNIN_AUTH_TOKEN: %w", err)
+	}
 
 	if path != "" {
 		v.SetConfigFile(path)
@@ -96,6 +114,8 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("policy.fail_on_severity", "high")
 	v.SetDefault("storage.driver", "sqlite")
 	v.SetDefault("storage.dsn", "./bannin.db")
+	v.SetDefault("server.host", "127.0.0.1")
+	v.SetDefault("server.port", 8080)
 	v.SetDefault("logging.level", "info")
 }
 
@@ -110,6 +130,9 @@ func (c *Config) Validate() error {
 	}
 	if c.Logging.Level != "" && !validLogLevels[c.Logging.Level] {
 		return fmt.Errorf("config: logging.level %q must be one of debug, info, warn, error", c.Logging.Level)
+	}
+	if c.Server.Port < 0 || c.Server.Port > 65535 {
+		return fmt.Errorf("config: server.port %d must be between 0 and 65535", c.Server.Port)
 	}
 	return nil
 }

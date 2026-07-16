@@ -106,6 +106,7 @@ func (p *Plugin) Parse(raw plugin.RawResult) ([]plugin.Finding, error) {
 					Scanner:     p.Name(),
 					RuleID:      vuln.ID,
 					Aliases:     vuln.Aliases,
+					Category:    plugin.CategorySCA,
 					Title:       vuln.ID,
 					Description: description(vuln),
 					Severity:    mapSeverity(vuln),

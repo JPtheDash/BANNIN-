@@ -17,4 +17,5 @@ func init() {
 	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default: ./bannin.yaml)")
 	rootCmd.AddCommand(versionCmd)
 	rootCmd.AddCommand(scanCmd)
+	rootCmd.AddCommand(serveCmd)
 }

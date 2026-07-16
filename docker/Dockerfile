@@ -13,4 +13,7 @@ RUN CGO_ENABLED=0 go build -o /out/bannin ./cmd/bannin
 
 FROM alpine:3.20
 COPY --from=build /out/bannin /usr/local/bin/bannin
+RUN adduser -D -u 10001 bannin
+USER bannin
+HEALTHCHECK --interval=30s --timeout=5s CMD ["bannin", "version"]
 ENTRYPOINT ["bannin"]

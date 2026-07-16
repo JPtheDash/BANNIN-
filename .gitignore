@@ -2,6 +2,10 @@
 /dist/
 *.sqlite
 *.sqlite3
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
 report.html
 report.json
 report.sarif
@@ -11,3 +15,5 @@ node_modules/
 /bannin-report/
 .DS_Store
 .claude/
+web/dist
+web/.env.local

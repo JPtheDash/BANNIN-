@@ -3,6 +3,7 @@ package scanner
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/jyotidash/bannin/internal/scheduler"
 	"github.com/jyotidash/bannin/pkg/plugin"
@@ -15,6 +16,11 @@ type Result struct {
 	Plugin   string
 	Findings []plugin.Finding
 	Err      error
+	// Duration covers the plugin's health check, Run, and Parse — the
+	// full time this plugin held up the scan. Reported per-plugin
+	// (rather than only the scan's total wall time) so a dashboard can
+	// show which scanner is slow, not just that the scan was slow.
+	Duration time.Duration
 }
 
 // Manager resolves configured plugin names against a Registry and drives
@@ -85,6 +91,7 @@ func Collect(results []Result) []plugin.Finding {
 
 func runOne(ctx context.Context, target string, s plugin.Scanner) (res Result) {
 	name := s.Name()
+	start := time.Now()
 
 	// A plugin is third-party code driving an external tool; if it
 	// panics it must fail as its own Result, not take down the whole
@@ -94,6 +101,7 @@ func runOne(ctx context.Context, target string, s plugin.Scanner) (res Result) {
 		if r := recover(); r != nil {
 			res = Result{Plugin: name, Err: fmt.Errorf("plugin panicked: %v", r)}
 		}
+		res.Duration = time.Since(start)
 	}()
 
 	if err := s.HealthCheck(ctx); err != nil {

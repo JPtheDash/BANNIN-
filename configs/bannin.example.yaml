@@ -5,8 +5,15 @@
 # are all live. policy.fail_on_severity gates the exit code: any finding
 # at or above it fails the scan (one of: low, medium, high, critical;
 # set "" to disable gating). report.formats: "json" and "html" render
-# today — sarif is accepted but ignored until its milestone. storage is
-# loaded but not yet consumed.
+# today — sarif is accepted but ignored until its milestone.
+# storage.driver: sqlite (the default) persists every scan to dsn;
+# postgres is accepted by validation but not implemented yet. server
+# configures `bannin serve`, which serves that history when driver is
+# sqlite, or falls back to report.output_dir's report.json (most
+# recent scan only) otherwise. server.auth_token requires a Bearer
+# credential on the dashboard API (every route except /healthz); leave
+# empty only on a host you already trust. Prefer the BANNIN_AUTH_TOKEN
+# env var over committing a token to this file.
 
 scan:
   target: "."
@@ -26,6 +33,11 @@ policy:
 storage:
   driver: "sqlite"
   dsn: "./bannin.db"
+
+server:
+  host: "127.0.0.1"
+  port: 8080
+  auth_token: ""
 
 logging:
   level: "info"

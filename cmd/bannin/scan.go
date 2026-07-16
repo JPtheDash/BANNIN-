@@ -8,11 +8,11 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/jyotidash/bannin/internal/config"
-	"github.com/jyotidash/bannin/internal/correlation"
 	"github.com/jyotidash/bannin/internal/logging"
 	"github.com/jyotidash/bannin/internal/policy"
 	"github.com/jyotidash/bannin/internal/report"
-	"github.com/jyotidash/bannin/internal/scanner"
+	"github.com/jyotidash/bannin/internal/scanrun"
+	"github.com/jyotidash/bannin/internal/storage"
 	"github.com/jyotidash/bannin/pkg/plugin"
 )
 
@@ -40,50 +40,11 @@ report.output_dir (when "json" is among report.formats).`,
 		}
 		defer logger.Sync()
 
-		logger.Info("scan starting",
-			zap.String("target", cfg.Scan.Target),
-			zap.Strings("plugins", cfg.Scan.Plugins),
-		)
-
-		mgr := scanner.NewManager(nil)
-		scanners, err := mgr.Resolve(cfg.Scan.Plugins)
+		rep, failed, err := scanrun.Run(cmd.Context(), cfg.Scan.Target, cfg.Scan.Plugins, logger)
 		if err != nil {
 			logger.Error("scan aborted", zap.Error(err))
 			return err
 		}
-
-		results := mgr.Scan(cmd.Context(), cfg.Scan.Target, scanners)
-		var failed bool
-		for _, r := range results {
-			if r.Err != nil {
-				failed = true
-				logger.Error("plugin failed", zap.String("plugin", r.Plugin), zap.Error(r.Err))
-				continue
-			}
-			logger.Info("plugin finished", zap.String("plugin", r.Plugin), zap.Int("findings", len(r.Findings)))
-		}
-
-		// The findings pipeline: merge -> normalize severities ->
-		// normalize paths -> dedupe -> reconcile aliases -> sort. Every
-		// downstream consumer (reports now; dashboard, risk scoring
-		// later) sees this same collection. Paths normalize before the
-		// correlation passes because both compare locations literally.
-		findings := scanner.Collect(results)
-		findings = plugin.NormalizeFindings(findings)
-		correlation.NormalizePaths(findings, cfg.Scan.Target)
-		before := len(findings)
-		findings = correlation.Dedupe(findings)
-		if removed := before - len(findings); removed > 0 {
-			logger.Info("deduplicated findings", zap.Int("removed", removed))
-		}
-		before = len(findings)
-		findings = correlation.ReconcileAliases(findings)
-		if merged := before - len(findings); merged > 0 {
-			logger.Info("reconciled alias findings", zap.Int("merged", merged))
-		}
-		plugin.SortFindings(findings)
-
-		rep := report.New(cfg.Scan.Target, cfg.Scan.Plugins, findings)
 		report.Summary(cmd.OutOrStdout(), rep)
 
 		writers := map[string]func(string, report.Report) (string, error){
@@ -105,10 +66,37 @@ report.output_dir (when "json" is among report.formats).`,
 			fmt.Fprintf(cmd.OutOrStdout(), "Report written to %s\n", path)
 		}
 
+		// Scan history: best-effort. A storage hiccup shouldn't fail a
+		// scan whose reports and policy gate already succeeded — it's
+		// supplementary to the artifacts scan just produced, not part of
+		// their contract.
+		switch cfg.Storage.Driver {
+		case "sqlite":
+			if store, err := storage.Open(cfg.Storage.Driver, cfg.Storage.DSN); err != nil {
+				logger.Error("opening scan history storage; scan not recorded to history", zap.Error(err))
+			} else {
+				id, err := store.Save(rep)
+				store.Close()
+				if err != nil {
+					logger.Error("saving scan to history", zap.Error(err))
+				} else {
+					logger.Info("scan saved to history", zap.Int64("id", id))
+				}
+			}
+		case "":
+			// History disabled; nothing to do.
+		default:
+			logger.Warn("storage driver not yet implemented; scan not recorded to history", zap.String("driver", cfg.Storage.Driver))
+		}
+
 		// Policy gate. An empty fail_on_severity disables gating; the
 		// config default is "high".
 		var violated bool
 		if cfg.Policy.FailOnSeverity != "" {
+			findings := make([]plugin.Finding, len(rep.Findings))
+			for i, f := range rep.Findings {
+				findings[i] = f.Finding
+			}
 			decision, err := policy.Evaluate(findings, plugin.Severity(cfg.Policy.FailOnSeverity))
 			if err != nil {
 				return err

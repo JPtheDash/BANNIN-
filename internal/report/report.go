@@ -21,15 +21,43 @@ type Finding struct {
 	Risk risk.Assessment `json:"risk"`
 }
 
+// PluginRun records one plugin's execution outcome for this scan —
+// what a "Scanner Health" view needs, and information the findings
+// list alone can't carry: a plugin that failed contributes zero
+// findings, indistinguishable from a plugin that genuinely found
+// nothing unless its outcome is recorded separately.
+type PluginRun struct {
+	Name       string `json:"name"`
+	Success    bool   `json:"success"`
+	Error      string `json:"error,omitempty"`
+	Findings   int    `json:"findings"`
+	DurationMS int64  `json:"duration_ms"`
+}
+
 // Report is the envelope around a scan's normalized findings — the one
-// artifact every output format (JSON today; HTML, SARIF, dashboard,
-// policy evaluation later) is rendered from. Findings are expected to
-// arrive already normalized, deduplicated, and sorted by the pipeline.
+// artifact every output format (JSON today; HTML, dashboard, policy
+// evaluation later) is rendered from. Findings are expected to arrive
+// already normalized, deduplicated, and sorted by the pipeline.
 type Report struct {
 	GeneratedAt time.Time `json:"generated_at"`
 	Target      string    `json:"target"`
-	Plugins     []string  `json:"plugins"`
-	Findings    []Finding `json:"findings"`
+	// Plugins lists the plugin names that were configured to run
+	// (cfg.Scan.Plugins) — what was requested. PluginRuns records what
+	// actually happened; the two names can diverge, e.g. an unregistered
+	// plugin caught before any tool runs.
+	Plugins    []string    `json:"plugins"`
+	PluginRuns []PluginRun `json:"plugin_runs,omitempty"`
+	Findings   []Finding   `json:"findings"`
+}
+
+// WithPluginRuns attaches per-plugin execution outcomes and returns the
+// updated Report. Separate from New because most callers (tests
+// building a Report directly from findings, storage round-trips) don't
+// have — or need — execution details; only the real scan pipeline in
+// cmd/bannin does.
+func (r Report) WithPluginRuns(runs []PluginRun) Report {
+	r.PluginRuns = runs
+	return r
 }
 
 // New assembles a Report for the given scan: each finding gets its risk

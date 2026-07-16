@@ -100,6 +100,7 @@ func (p *Plugin) Parse(raw plugin.RawResult) ([]plugin.Finding, error) {
 			ID:          l.Fingerprint,
 			Scanner:     p.Name(),
 			RuleID:      l.RuleID,
+			Category:    plugin.CategorySecrets,
 			Title:       "Secret detected: " + l.RuleID,
 			Description: l.Description,
 			Severity:    plugin.SeverityHigh,

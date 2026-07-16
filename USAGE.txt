@@ -1,0 +1,109 @@
+BANNIN — HOW TO USE IT
+=======================
+
+BANNIN is a tool that scans your code for security problems (bugs,
+leaked passwords, vulnerable dependencies, misconfigured infra) and
+shows you what it found — either as a report file, or in a web
+dashboard.
+
+FASTEST WAY TO TRY IT (2 commands)
+------------------------------------
+    ./scripts/install-tools.sh     (installs the scanner tools)
+    ./scripts/start-web.sh         (builds + starts everything, opens the dashboard)
+
+That's it for a local look. For real CI/CD or GUI setup, read on.
+
+There are two ways to use it. Pick one, or use both.
+
+
+1) CI/CD — runs automatically on every build, fails the build if bad
+   -----------------------------------------------------------------
+
+   Use this when you want every pull request / build to be checked
+   automatically, and to BLOCK the build if something serious is found.
+
+   Steps:
+
+   a) Add a config file called bannin.yaml to your repo (copy
+      configs/bannin.example.yaml and edit the "target" if needed).
+
+   b) In your CI pipeline, install the scanner tools once per job:
+
+          ./scripts/install-tools.sh --ci --skip-zap
+
+      (--ci = no interactive prompts; --skip-zap because ZAP scans a
+      running app, not source code — only add it to a job that has one
+      deployed. Drop --skip-zap if you do have a test deployment.)
+
+   c) Add a step that runs:
+
+          bannin scan --config bannin.yaml
+
+      That's it. BANNIN will:
+        - scan your code
+        - print a summary in the CI logs
+        - save a report (report.html and report.json) as build output
+        - FAIL the build (non-zero exit code) if it finds anything at
+          or above the severity you set in "fail_on_severity"
+
+   d) Download/open report.html from your CI's build artifacts to see
+      full details of everything it found, grouped by category.
+
+   Nothing else needed. No dashboard, no server — just the scan step.
+
+
+2) STANDALONE / GUI — a dashboard you and your team can browse
+   -------------------------------------------------------------
+
+   Use this when you want a live web page showing scan results,
+   history over time, and details you can click into — instead of
+   reading a report file.
+
+   Shortcut: run ./scripts/start-web.sh and skip straight to step (e) —
+   it does (a)-(d) for you. Manual steps, if you want to see each part:
+
+   a) Same as above: have a bannin.yaml with:
+          storage:
+            driver: "sqlite"
+            dsn: "./bannin.db"
+      (this makes BANNIN remember every past scan, not just the last one)
+
+   b) Run a scan at least once:
+          bannin scan --config bannin.yaml
+
+   c) Start the dashboard server:
+          bannin serve --config bannin.yaml
+      (this just serves the data — it does not scan anything itself)
+
+   d) Start the web dashboard (only needed once, then it just runs):
+          cd web
+          npm install
+          npm run dev
+
+   e) Open the link it gives you (usually http://localhost:5173) in
+      your browser. You'll see:
+        - a security score for the latest scan
+        - findings broken down by severity and category
+        - a searchable table of every finding, click one for full detail
+        - scan history over time
+        - whether each scanner (Semgrep, Trivy, etc.) ran OK
+
+   f) To get new data in the dashboard, just run "bannin scan" again —
+      the dashboard picks up the new scan automatically (refresh the
+      page).
+
+   g) Or scan something new WITHOUT touching a terminal at all: click
+      "New Scan" in the sidebar, paste a target (a URL like
+      https://example.com for a live app, or a local folder path),
+      pick scanners if you want (leave blank to auto-pick), click
+      "Run scan". It runs in the background and the page shows a
+      "View results" button when it's done.
+
+
+THE SHORT VERSION
+------------------
+- CI/CD  = "bannin scan" in your pipeline, fails the build on bad findings.
+- GUI    = "bannin scan" to gather data + "bannin serve" + the web app
+           to browse it.
+- You can do both at once: same scans feed both the CI gate and the
+  dashboard, as long as storage.driver is set to sqlite.

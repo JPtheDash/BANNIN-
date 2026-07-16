@@ -119,6 +119,7 @@ func (p *Plugin) Parse(raw plugin.RawResult) ([]plugin.Finding, error) {
 				ID:          alert.PluginID + ":" + uri,
 				Scanner:     p.Name(),
 				RuleID:      alert.PluginID,
+				Category:    plugin.CategoryDAST,
 				Title:       alert.Alert,
 				Description: stripTags(alert.Desc),
 				Severity:    mapRiskCode(alert.RiskCode),

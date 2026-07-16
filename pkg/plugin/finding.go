@@ -12,6 +12,22 @@ const (
 	SeverityInfo     Severity = "info"
 )
 
+// Category is the kind of analysis that produced a Finding — the axis
+// reports group by, since "what kind of problem is this" is usually
+// the first question after "how bad is it". A plugin sets its own
+// Category rather than having it inferred from Scanner name, because a
+// single tool can span more than one (Trivy reports both dependency
+// vulnerabilities and IaC misconfigurations from one Parse call).
+type Category string
+
+const (
+	CategorySAST    Category = "sast"    // static application analysis (Semgrep)
+	CategorySCA     Category = "sca"     // software composition / dependency analysis (OSV, Trivy vuln)
+	CategorySecrets Category = "secrets" // exposed credentials (Gitleaks)
+	CategoryIaC     Category = "iac"     // infrastructure-as-code misconfiguration (Checkov, Trivy misconfig)
+	CategoryDAST    Category = "dast"    // dynamic analysis against a running app (ZAP)
+)
+
 // Location pinpoints where a Finding was detected in the scanned target.
 // JSON tags define the stable serialization used by report.json and
 // every future exporter; changing them is a breaking schema change.
@@ -45,7 +61,10 @@ type Finding struct {
 	// internal/correlation uses these to recognize one advisory reported
 	// by multiple scanners; plugins populate them when the tool provides
 	// them.
-	Aliases     []string `json:"aliases,omitempty"`
+	Aliases []string `json:"aliases,omitempty"`
+	// Category classifies what kind of analysis produced this Finding
+	// (see Category). Every built-in plugin sets it; it is not inferred.
+	Category    Category `json:"category"`
 	Title       string   `json:"title"`
 	Description string   `json:"description,omitempty"`
 	Severity    Severity `json:"severity"`

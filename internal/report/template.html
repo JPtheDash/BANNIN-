@@ -7,29 +7,37 @@
 <style>
   :root {
     color-scheme: light;
-    --page:       #f9f9f7;
-    --surface:    #fcfcfb;
-    --ink:        #0b0b0b;
-    --ink-2:      #52514e;
-    --muted:      #898781;
-    --hairline:   rgba(11,11,11,0.10);
-    --grid:       #e1e0d9;
+    --page:       #f7f8fa;
+    --surface:    #ffffff;
+    --surface-2:  #f1f3f6;
+    --ink:        #0b1220;
+    --ink-2:      #4b5568;
+    --muted:      #8a93a6;
+    --hairline:   rgba(11,18,32,0.10);
+    --grid:       #e4e7ee;
+    --accent:     #0e7490;
+    --accent-ink: #0e7490;
     --sev-critical: #d03b3b;
     --sev-high:     #ec835a;
-    --sev-medium:   #fab219;
-    --sev-low:      #898781;
-    --sev-info:     #c3c2b7;
+    --sev-medium:   #d69e15;
+    --sev-low:      #647089;
+    --sev-info:     #a7afc0;
+    --ok:           #17a673;
   }
   @media (prefers-color-scheme: dark) {
     :root {
       color-scheme: dark;
-      --page:     #0d0d0d;
-      --surface:  #1a1a19;
-      --ink:      #ffffff;
-      --ink-2:    #c3c2b7;
-      --muted:    #898781;
-      --hairline: rgba(255,255,255,0.10);
-      --grid:     #2c2c2a;
+      --page:     #0a0e16;
+      --surface:  #10151f;
+      --surface-2: #161c29;
+      --ink:      #eef1f7;
+      --ink-2:    #a9b2c4;
+      --muted:    #6d7690;
+      --hairline: rgba(255,255,255,0.08);
+      --grid:     #232a3a;
+      --accent:   #22b8cf;
+      --accent-ink: #7dd3fc;
+      --ok:       #34d399;
     }
   }
   * { box-sizing: border-box; }
@@ -39,49 +47,82 @@
     color: var(--ink);
     font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
   }
-  main { max-width: 960px; margin: 0 auto; padding: 32px 20px 64px; }
-  header h1 { font-size: 22px; margin: 0 0 4px; }
-  header .meta { color: var(--ink-2); font-size: 13px; margin: 0; }
-  header .meta strong { color: var(--ink); font-weight: 600; }
+  main { max-width: 1040px; margin: 0 auto; padding: 32px 20px 64px; }
+
+  header.masthead {
+    display: flex; align-items: center; gap: 14px;
+    margin-bottom: 24px;
+  }
+  header.masthead svg { width: 40px; height: 40px; flex: none; }
+  header.masthead .word { font-size: 20px; font-weight: 750; letter-spacing: 0.01em; }
+  header.masthead .tagline { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; }
+
+  .meta-bar h1 { font-size: 20px; margin: 0 0 4px; }
+  .meta-bar .meta { color: var(--ink-2); font-size: 13px; margin: 0 0 24px; }
+  .meta-bar .meta strong { color: var(--ink); font-weight: 600; }
 
   .tiles {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
     gap: 12px;
-    margin: 24px 0;
+    margin: 0 0 28px;
   }
   .tile {
     background: var(--surface);
     border: 1px solid var(--hairline);
-    border-radius: 8px;
-    padding: 12px 14px;
+    border-radius: 16px;
+    padding: 14px 16px;
   }
-  .tile .num { font-size: 26px; font-weight: 650; }
+  .tile .num { font-size: 27px; font-weight: 700; font-variant-numeric: tabular-nums; }
   .tile .label {
     display: flex; align-items: center; gap: 6px;
     color: var(--ink-2); font-size: 12px; text-transform: uppercase;
-    letter-spacing: 0.04em;
+    letter-spacing: 0.04em; margin-top: 2px;
   }
-  .tile.zero .num { color: var(--muted); font-weight: 450; }
+  .tile.zero .num { color: var(--muted); font-weight: 500; }
   .dot { width: 10px; height: 10px; border-radius: 50%; flex: none; }
-  .sev-critical .dot { background: var(--sev-critical); }
-  .sev-high     .dot { background: var(--sev-high); }
-  .sev-medium   .dot { background: var(--sev-medium); }
-  .sev-low      .dot { background: var(--sev-low); }
-  .sev-info     .dot { background: var(--sev-info); }
+  .sev-critical .dot, .sev-critical.dot { background: var(--sev-critical); }
+  .sev-high     .dot, .sev-high.dot     { background: var(--sev-high); }
+  .sev-medium   .dot, .sev-medium.dot   { background: var(--sev-medium); }
+  .sev-low      .dot, .sev-low.dot      { background: var(--sev-low); }
+  .sev-info     .dot, .sev-info.dot     { background: var(--sev-info); }
 
-  .scanners {
-    color: var(--ink-2); font-size: 13px; margin: 0 0 28px;
+  .scanner-health {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 12px;
+    margin: 0 0 28px;
   }
-  .scanners span { margin-right: 14px; }
-  .scanners .n { font-variant-numeric: tabular-nums; color: var(--ink); font-weight: 600; }
+  .scanner-card {
+    background: var(--surface);
+    border: 1px solid var(--hairline);
+    border-radius: 16px;
+    padding: 14px 16px;
+  }
+  .scanner-card .row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .scanner-card .name { font-weight: 650; }
+  .status-pill {
+    display: inline-flex; align-items: center; gap: 5px;
+    font-size: 11px; font-weight: 650; text-transform: uppercase; letter-spacing: 0.03em;
+    padding: 3px 8px; border-radius: 999px;
+  }
+  .status-pill.ok { color: var(--ok); background: color-mix(in srgb, var(--ok) 16%, transparent); }
+  .status-pill.fail { color: var(--sev-critical); background: color-mix(in srgb, var(--sev-critical) 16%, transparent); }
+  .scanner-card .stats { margin-top: 8px; color: var(--ink-2); font-size: 12px; }
+  .scanner-card .err { margin-top: 6px; color: var(--sev-critical); font-size: 12px; overflow-wrap: anywhere; }
 
-  h2 { font-size: 15px; margin: 28px 0 10px; }
+  h2.section-title {
+    display: flex; align-items: baseline; gap: 8px;
+    font-size: 15px; margin: 32px 0 12px;
+  }
+  h2.section-title .count {
+    color: var(--muted); font-weight: 500; font-size: 13px;
+  }
 
   .finding {
     background: var(--surface);
     border: 1px solid var(--hairline);
-    border-radius: 8px;
+    border-radius: 14px;
     margin-bottom: 8px;
   }
   .finding summary {
@@ -91,15 +132,12 @@
     grid-template-columns: 36px 92px minmax(0, 1.7fr) minmax(0, 1fr);
     align-items: baseline;
     gap: 10px;
-    padding: 10px 14px;
+    padding: 11px 14px;
     cursor: pointer;
     list-style: none;
   }
-  .finding .score {
-    font-weight: 650; font-variant-numeric: tabular-nums;
-    text-align: right;
-  }
   .finding summary::-webkit-details-marker { display: none; }
+  .finding .score { font-weight: 700; font-variant-numeric: tabular-nums; text-align: right; }
   .sev {
     display: inline-flex; align-items: center; gap: 6px;
     font-size: 12px; font-weight: 600; text-transform: uppercase;
@@ -121,23 +159,53 @@
     color: var(--muted); margin-top: 10px;
   }
   .finding .body dd { margin: 2px 0 0; overflow-wrap: anywhere; }
-  .finding .body a { color: inherit; }
+  .finding .body a { color: var(--accent-ink); }
   .empty {
     background: var(--surface); border: 1px solid var(--hairline);
-    border-radius: 8px; padding: 28px; text-align: center; color: var(--ink-2);
+    border-radius: 14px; padding: 28px; text-align: center; color: var(--ink-2);
   }
 </style>
 </head>
 <body>
 <main>
-  <header>
-    <h1>BANNIN security report</h1>
+  <header class="masthead">
+    <svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="BANNIN">
+      <defs>
+        <linearGradient id="bannin-armor" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stop-color="#7dd3fc"/>
+          <stop offset="55%" stop-color="#22b8cf"/>
+          <stop offset="100%" stop-color="#0e7490"/>
+        </linearGradient>
+        <linearGradient id="bannin-horn" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0%" stop-color="#f5d78e"/>
+          <stop offset="100%" stop-color="#c9971f"/>
+        </linearGradient>
+      </defs>
+      <path d="M32 20 C 27 12, 19 8, 12 10 C 17 15, 20 20, 23 26 Z" fill="url(#bannin-horn)"/>
+      <path d="M32 20 C 37 12, 45 8, 52 10 C 47 15, 44 20, 41 26 Z" fill="url(#bannin-horn)"/>
+      <path d="M32 14 L50 21 L50 34 C 50 46, 42 54, 32 58 C 22 54, 14 46, 14 34 L14 21 Z" fill="url(#bannin-armor)" opacity="0.16"/>
+      <path d="M32 14 L50 21 L50 34 C 50 46, 42 54, 32 58 C 22 54, 14 46, 14 34 L14 21 Z" fill="none" stroke="url(#bannin-armor)" stroke-width="2"/>
+      <path d="M32 24 C 24 24, 19 29, 19 35 L19 37 L45 37 L45 35 C 45 29, 40 24, 32 24 Z" fill="url(#bannin-armor)"/>
+      <path d="M19 37 C 19 41.5, 25 43.5, 32 43.5 C 39 43.5, 45 41.5, 45 37" fill="none" stroke="url(#bannin-armor)" stroke-width="1.6"/>
+      <path d="M21 45 L43 45 L41 49 L23 49 Z" fill="url(#bannin-armor)" opacity="0.85"/>
+      <path d="M23 50 L41 50 L39.5 54 L24.5 54 Z" fill="url(#bannin-armor)" opacity="0.7"/>
+      <rect x="27.5" y="15" width="9" height="7.5" rx="1.6" fill="#0b1220"/>
+      <path d="M29.3 15 v-2.4 a2.7 2.7 0 0 1 5.4 0 v2.4" fill="none" stroke="#0b1220" stroke-width="2"/>
+      <circle cx="32" cy="18.4" r="1.15" fill="#7dd3fc"/>
+    </svg>
+    <div>
+      <div class="word">BANNIN</div>
+      <div class="tagline">Security Report</div>
+    </div>
+  </header>
+
+  <div class="meta-bar">
+    <h1>Scan of {{.Target}}</h1>
     <p class="meta">
-      Target <strong>{{.Target}}</strong>
-      &nbsp;·&nbsp; {{.Total}} finding{{if ne .Total 1}}s{{end}}
+      {{.Total}} finding{{if ne .Total 1}}s{{end}}
       &nbsp;·&nbsp; {{.GeneratedAt.Format "2006-01-02 15:04 MST"}}
     </p>
-  </header>
+  </div>
 
   <div class="tiles">
     {{range .Tiles}}
@@ -148,16 +216,33 @@
     {{end}}
   </div>
 
-  {{if .Scanners}}
-  <p class="scanners">
-    {{range .Scanners}}<span>{{.Name}} <span class="n">{{.Count}}</span></span>{{end}}
-  </p>
+  {{if .PluginRuns}}
+  <h2 class="section-title">Scanner health</h2>
+  <div class="scanner-health">
+    {{range .PluginRuns}}
+    <div class="scanner-card">
+      <div class="row">
+        <span class="name">{{.Name}}</span>
+        {{if .Success}}
+        <span class="status-pill ok">Healthy</span>
+        {{else}}
+        <span class="status-pill fail">Failed</span>
+        {{end}}
+      </div>
+      <div class="stats">{{.Findings}} finding{{if ne .Findings 1}}s{{end}} &nbsp;·&nbsp; {{.DurationMS}}ms</div>
+      {{with .Error}}<div class="err">{{.}}</div>{{end}}
+    </div>
+    {{end}}
+  </div>
   {{end}}
 
-  <h2>Findings</h2>
   {{if not .Findings}}
+  <h2 class="section-title">Findings</h2>
   <div class="empty">No findings.</div>
   {{end}}
+
+  {{range .Categories}}
+  <h2 class="section-title">{{.Label}} <span class="count">{{len .Findings}}</span></h2>
   {{range .Findings}}
   <details class="finding">
     <summary>
@@ -187,6 +272,7 @@
       </dl>
     </div>
   </details>
+  {{end}}
   {{end}}
 </main>
 </body>

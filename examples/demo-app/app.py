@@ -5,10 +5,15 @@
 import os
 import sqlite3
 
-# Deliberately fabricated credential (not a real token) so Gitleaks has
-# something to detect. gitleaks:allow is NOT set here on purpose — the
-# whole point is for the scan to flag it.
-SLACK_WEBHOOK = "https://hooks.slack.com/services/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"
+# Deliberately fabricated credential so Gitleaks has something to
+# detect. gitleaks:allow is NOT set here on purpose — the whole point
+# is for the scan to flag it. This trips gitleaks' generic-api-key
+# rule (keyword + entropy heuristic, verified locally) rather than a
+# vendor-specific format — a vendor-shaped fake (Slack webhook, GitHub
+# PAT, Stripe key, ...) matches the same regex GitHub's push protection
+# scans for, secret or not, and gets the push blocked regardless of the
+# value being fake.
+DEMO_SERVICE_TOKEN = "4f8d9a2b7c1e6f3a0d5b8c2e7f1a4d9b6c3e0f8a2d5b7c1e"
 
 
 def run_expression(user_input):

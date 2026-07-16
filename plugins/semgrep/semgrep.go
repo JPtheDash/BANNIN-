@@ -88,6 +88,7 @@ func (p *Plugin) Parse(raw plugin.RawResult) ([]plugin.Finding, error) {
 			ID:          r.CheckID + ":" + r.Path + ":" + strconv.Itoa(r.Start.Line),
 			Scanner:     p.Name(),
 			RuleID:      r.CheckID,
+			Category:    plugin.CategorySAST,
 			Title:       r.CheckID,
 			Description: r.Extra.Message,
 			Severity:    mapSeverity(r.Extra.Severity),

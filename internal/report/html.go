@@ -6,6 +6,7 @@ import (
 	"html/template"
 	"os"
 	"path/filepath"
+	"sort"
 
 	"github.com/jyotidash/bannin/pkg/plugin"
 )
@@ -19,9 +20,10 @@ var reportTmpl = template.Must(template.New("report").Parse(htmlTemplate))
 // the page displays. Building them here keeps the template logic-free.
 type htmlView struct {
 	Report
-	Total    int
-	Tiles    []severityTile
-	Scanners []scannerCount
+	Total      int
+	Tiles      []severityTile
+	Scanners   []scannerCount
+	Categories []categorySection
 }
 
 type severityTile struct {
@@ -32,6 +34,16 @@ type severityTile struct {
 type scannerCount struct {
 	Name  string
 	Count int
+}
+
+// categorySection groups a slice of the report's findings under one
+// Category heading, in the same risk order they already carry from
+// Report.Findings — so a categorized report doesn't sacrifice the
+// "what to fix first" ordering, just organizes it.
+type categorySection struct {
+	Category plugin.Category
+	Label    string
+	Findings []Finding
 }
 
 // WriteHTML renders the report as a single self-contained HTML file
@@ -47,9 +59,10 @@ func WriteHTML(dir string, r Report) (string, error) {
 	}
 
 	view := htmlView{
-		Report: r,
-		Total:  len(r.Findings),
-		Tiles:  severityTiles(r.Findings),
+		Report:     r,
+		Total:      len(r.Findings),
+		Tiles:      severityTiles(r.Findings),
+		Categories: categorySections(r.Findings),
 	}
 	counts := make(map[string]int)
 	for _, f := range r.Findings {
@@ -86,4 +99,38 @@ func severityTiles(findings []Finding) []severityTile {
 		tiles = append(tiles, severityTile{Severity: sev, Count: counts[sev]})
 	}
 	return tiles
+}
+
+// categorySections partitions findings into categoryOrder's buckets,
+// skipping empty ones, preserving each bucket's existing risk order.
+// Any finding whose Category isn't one of the five known values (there
+// shouldn't be any — every built-in plugin sets one) falls into a
+// trailing "Other" bucket rather than being silently dropped.
+func categorySections(findings []Finding) []categorySection {
+	byCategory := make(map[plugin.Category][]Finding)
+	for _, f := range findings {
+		byCategory[f.Category] = append(byCategory[f.Category], f)
+	}
+
+	order := append([]plugin.Category{}, categoryOrder...)
+	known := make(map[plugin.Category]bool, len(categoryOrder))
+	for _, c := range categoryOrder {
+		known[c] = true
+	}
+	var unknown []plugin.Category
+	for c := range byCategory {
+		if !known[c] {
+			unknown = append(unknown, c)
+		}
+	}
+	sort.Slice(unknown, func(i, j int) bool { return unknown[i] < unknown[j] })
+	order = append(order, unknown...)
+
+	sections := make([]categorySection, 0, len(order))
+	for _, c := range order {
+		if fs := byCategory[c]; len(fs) > 0 {
+			sections = append(sections, categorySection{Category: c, Label: CategoryLabel(c), Findings: fs})
+		}
+	}
+	return sections
 }

@@ -18,6 +18,42 @@ var summaryOrder = []plugin.Severity{
 	plugin.SeverityInfo,
 }
 
+// categoryOrder fixes the category rows' display order — roughly
+// "closest to shipping code" first: what a developer wrote (SAST),
+// what they pulled in (SCA), what leaked (secrets), what it runs on
+// (IaC), then what's observable once it's live (DAST).
+var categoryOrder = []plugin.Category{
+	plugin.CategorySAST,
+	plugin.CategorySCA,
+	plugin.CategorySecrets,
+	plugin.CategoryIaC,
+	plugin.CategoryDAST,
+}
+
+// categoryLabel gives each Category a human-readable heading, shared
+// by the CLI summary, the HTML report, and (via dashboard.Summarize)
+// the web UI, so all three describe categories identically.
+var categoryLabel = map[plugin.Category]string{
+	plugin.CategorySAST:    "Static Analysis (SAST)",
+	plugin.CategorySCA:     "Dependencies (SCA)",
+	plugin.CategorySecrets: "Secrets",
+	plugin.CategoryIaC:     "Infrastructure (IaC)",
+	plugin.CategoryDAST:    "Dynamic Analysis (DAST)",
+}
+
+// CategoryLabel returns category's display heading, or its raw value
+// title-cased if it's not one of the five known categories (a future
+// plugin adding a new category shouldn't render blank).
+func CategoryLabel(c plugin.Category) string {
+	if label, ok := categoryLabel[c]; ok {
+		return label
+	}
+	if c == "" {
+		return "Other"
+	}
+	return string(c)
+}
+
 // Summary writes a human-readable digest of the report to w: total
 // findings, the per-severity breakdown, and the per-scanner breakdown.
 // It reports on findings only — plugin execution failures are the
@@ -30,9 +66,11 @@ func Summary(w io.Writer, r Report) {
 
 	bySeverity := make(map[plugin.Severity]int)
 	byScanner := make(map[string]int)
+	byCategory := make(map[plugin.Category]int)
 	for _, f := range r.Findings {
 		bySeverity[f.Severity]++
 		byScanner[f.Scanner]++
+		byCategory[f.Category]++
 	}
 
 	fmt.Fprintf(w, "\nScan of %s complete: %d findings\n\n", r.Target, len(r.Findings))
@@ -41,6 +79,13 @@ func Summary(w io.Writer, r Report) {
 	for _, sev := range summaryOrder {
 		if n := bySeverity[sev]; n > 0 {
 			fmt.Fprintf(w, "    %-8s %d\n", sev, n)
+		}
+	}
+
+	fmt.Fprintln(w, "\n  By category:")
+	for _, cat := range categoryOrder {
+		if n := byCategory[cat]; n > 0 {
+			fmt.Fprintf(w, "    %-24s %d\n", CategoryLabel(cat), n)
 		}
 	}
 

@@ -1,0 +1,47 @@
+@import "tailwindcss";
+
+@theme {
+  --color-sev-critical: #ff4d4f;
+  --color-sev-high: #fa8c16;
+  --color-sev-medium: #fadb14;
+  --color-sev-low: #40a9ff;
+  --color-sev-info: #8c8c8c;
+  --color-ok: #52c41a;
+  --color-running: #13c2c2;
+
+  --color-bg: #0a0e16;
+  --color-panel: #10151f;
+  --color-panel-raised: #141b28;
+  --color-border: #1e2635;
+  --color-accent: #22b8cf;
+  --color-accent-soft: #0e7490;
+  --color-ink: #e6e9ef;
+  --color-muted: #8b94a7;
+  --color-muted-2: #5b6478;
+}
+
+html {
+  color-scheme: dark;
+}
+
+body {
+  @apply bg-[var(--color-bg)] text-[var(--color-ink)];
+  font: 14px/1.5 "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+::selection {
+  background: color-mix(in srgb, var(--color-accent) 35%, transparent);
+}
+
+* {
+  scrollbar-color: var(--color-border) transparent;
+}
+
+@keyframes slide-in {
+  from {
+    transform: translateX(100%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
