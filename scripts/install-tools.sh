@@ -128,66 +128,83 @@ install_checkov() {
 # plugins/zap invokes "zap.sh" directly via PATH lookup (no Docker
 # indirection), so installation has to end with zap.sh reachable on
 # PATH, not just "ZAP is installed somewhere."
+#
+# Uses the official cross-platform release (a Java bundle, same zip for
+# macOS and Linux) rather than a Homebrew cask or a Linux-only tarball:
+# the macOS cask (zaproxy/zap) is flagged deprecated by Homebrew for
+# failing Gatekeeper and native .dmg installs there don't expose a
+# zap.sh anyone can reliably symlink. The cross-platform bundle sidesteps
+# both — no signing check to fail, and it's the same zap.sh either way.
 install_zap() {
   $SKIP_ZAP && return 0
   wants zap || return 0
   log "OWASP ZAP"
-  if have zap.sh; then ok "already installed ($(zap.sh -version 2>&1 | head -1))"; return 0; fi
+  if have zap.sh; then ok "already installed ($(zap.sh -version 2>&1 | tail -1))"; return 0; fi
 
-  if [ "$OS" = "Darwin" ] && $BREW_AVAILABLE; then
-    brew install --cask zaproxy
-    local app="/Applications/OWASP ZAP.app/Contents/Java/zap.sh"
-    if [ -f "$app" ]; then
-      local bindir
-      bindir="$(brew --prefix)/bin"
-      chmod +x "$app"
-      ln -sf "$app" "$bindir/zap.sh"
-      ok "installed, symlinked into $bindir"
+  case "$OS" in
+    Darwin|Linux) ;;
+    *) warn "unsupported platform for automatic ZAP install; see https://www.zaproxy.org/download/"; return 0 ;;
+  esac
+
+  if ! have java; then
+    if $BREW_AVAILABLE; then
+      warn "installing openjdk (ZAP requires Java 11+)"
+      brew install openjdk
+    elif $APT_AVAILABLE; then
+      warn "installing openjdk (ZAP requires Java 11+)"
+      sudo apt-get update -y && sudo apt-get install -y default-jre-headless
     else
-      warn "cask installed but $app not found — open OWASP ZAP.app once, or symlink its zap.sh onto PATH manually"
-    fi
-    return 0
-  fi
-
-  if [ "$OS" = "Linux" ]; then
-    if ! have java; then
-      if $APT_AVAILABLE; then
-        warn "installing openjdk (ZAP requires Java 11+)"
-        sudo apt-get update -y && sudo apt-get install -y default-jre-headless
-      else
-        warn "ZAP requires Java 11+ and none was found; install a JRE first"
-        return 0
-      fi
-    fi
-
-    log "fetching latest ZAP release metadata"
-    local asset_url
-    asset_url="$(curl -sfL https://api.github.com/repos/zaproxy/zaproxy/releases/latest \
-      | grep -o '"browser_download_url": *"[^"]*Linux\.tar\.gz"' \
-      | head -1 | sed -E 's/.*"(https[^"]+)"/\1/')"
-    if [ -z "$asset_url" ]; then
-      warn "couldn't resolve the latest ZAP download automatically; see https://www.zaproxy.org/download/"
+      warn "ZAP requires Java 11+ and none was found; install a JRE first"
       return 0
     fi
+  fi
 
-    local install_dir="${HOME}/.local/opt/zap"
-    mkdir -p "$install_dir"
-    log "downloading $asset_url"
-    curl -sfL "$asset_url" | tar xz -C "$install_dir" --strip-components=1
+  if ! have unzip; then
+    if $APT_AVAILABLE; then
+      warn "installing unzip (needed to unpack the ZAP release)"
+      sudo apt-get update -y && sudo apt-get install -y unzip
+    else
+      warn "unzip not found and no supported installer for it; install unzip first"
+      return 0
+    fi
+  fi
 
-    local bindir="${HOME}/.local/bin"
-    mkdir -p "$bindir"
-    chmod +x "$install_dir/zap.sh"
-    ln -sf "$install_dir/zap.sh" "$bindir/zap.sh"
-    ok "installed to $install_dir, symlinked into $bindir"
-    case ":$PATH:" in
-      *":$bindir:"*) ;;
-      *) warn "$bindir is not on PATH — add \`export PATH=\"$bindir:\$PATH\"\` to your shell profile" ;;
-    esac
+  log "fetching latest ZAP release metadata"
+  local asset_url
+  asset_url="$(curl -sfL https://api.github.com/repos/zaproxy/zaproxy/releases/latest \
+    | grep -o '"browser_download_url": *"[^"]*Crossplatform\.zip"' \
+    | head -1 | sed -E 's/.*"(https[^"]+)"/\1/')"
+  if [ -z "$asset_url" ]; then
+    warn "couldn't resolve the latest ZAP download automatically; see https://www.zaproxy.org/download/"
     return 0
   fi
 
-  warn "unsupported platform for automatic ZAP install; see https://www.zaproxy.org/download/"
+  local install_dir="${HOME}/.local/opt/zap"
+  mkdir -p "$install_dir"
+  log "downloading $asset_url (a couple hundred MB — this takes a moment)"
+  local tmp_zip
+  tmp_zip="$(mktemp -t bannin-zap.XXXXXX).zip"
+  curl -sfL -o "$tmp_zip" "$asset_url"
+  unzip -q -o "$tmp_zip" -d "$install_dir.tmp"
+  rm -f "$tmp_zip"
+  # The zip's top-level dir is named after the release (e.g.
+  # ZAP_2.17.0/) — flatten it so install_dir always holds zap.sh
+  # directly, regardless of version.
+  local inner
+  inner="$(find "$install_dir.tmp" -maxdepth 1 -mindepth 1 -type d | head -1)"
+  rm -rf "$install_dir"
+  mv "$inner" "$install_dir"
+  rmdir "$install_dir.tmp" 2>/dev/null || true
+
+  local bindir="${HOME}/.local/bin"
+  mkdir -p "$bindir"
+  chmod +x "$install_dir/zap.sh"
+  ln -sf "$install_dir/zap.sh" "$bindir/zap.sh"
+  ok "installed to $install_dir, symlinked into $bindir"
+  case ":$PATH:" in
+    *":$bindir:"*) ;;
+    *) warn "$bindir is not on PATH — add \`export PATH=\"$bindir:\$PATH\"\` to your shell profile" ;;
+  esac
 }
 
 if $CI_MODE; then
