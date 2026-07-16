@@ -1,0 +1,5 @@
+# Deliberately old, known-vulnerable pins so OSV Scanner and Trivy have
+# real advisories to report. Do not upgrade these.
+requests==2.19.0
+flask==0.12.2
+pyyaml==5.3.1

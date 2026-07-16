@@ -1,0 +1,31 @@
+# Example BANNIN configuration (YAML, loaded via Viper — internal/config).
+# Load with: bannin scan --config configs/bannin.example.yaml
+#
+# scan, logging, policy, and report (json format + output_dir) are all
+# live. policy.fail_on_severity gates the exit code: any finding at or
+# above it fails the scan (one of: low, medium, high, critical; set ""
+# to disable gating). report.formats: only "json" renders today — html
+# and sarif are accepted but ignored until their milestones. storage is
+# loaded but not yet consumed.
+
+scan:
+  target: "."
+  plugins:
+    - semgrep
+    - osv
+    - trivy
+    - gitleaks
+
+report:
+  formats: ["html", "json", "sarif"]
+  output_dir: "./bannin-report"
+
+policy:
+  fail_on_severity: "high"
+
+storage:
+  driver: "sqlite"
+  dsn: "./bannin.db"
+
+logging:
+  level: "info"

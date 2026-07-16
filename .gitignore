@@ -1,0 +1,11 @@
+/bin/
+/dist/
+*.sqlite
+*.sqlite3
+report.html
+report.json
+report.sarif
+.env
+*.log
+node_modules/
+/bannin-report/

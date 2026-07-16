@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BANNIN report — {{.Target}}</title>
+<style>
+  :root {
+    color-scheme: light;
+    --page:       #f9f9f7;
+    --surface:    #fcfcfb;
+    --ink:        #0b0b0b;
+    --ink-2:      #52514e;
+    --muted:      #898781;
+    --hairline:   rgba(11,11,11,0.10);
+    --grid:       #e1e0d9;
+    --sev-critical: #d03b3b;
+    --sev-high:     #ec835a;
+    --sev-medium:   #fab219;
+    --sev-low:      #898781;
+    --sev-info:     #c3c2b7;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      color-scheme: dark;
+      --page:     #0d0d0d;
+      --surface:  #1a1a19;
+      --ink:      #ffffff;
+      --ink-2:    #c3c2b7;
+      --muted:    #898781;
+      --hairline: rgba(255,255,255,0.10);
+      --grid:     #2c2c2a;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--page);
+    color: var(--ink);
+    font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  main { max-width: 960px; margin: 0 auto; padding: 32px 20px 64px; }
+  header h1 { font-size: 22px; margin: 0 0 4px; }
+  header .meta { color: var(--ink-2); font-size: 13px; margin: 0; }
+  header .meta strong { color: var(--ink); font-weight: 600; }
+
+  .tiles {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+    gap: 12px;
+    margin: 24px 0;
+  }
+  .tile {
+    background: var(--surface);
+    border: 1px solid var(--hairline);
+    border-radius: 8px;
+    padding: 12px 14px;
+  }
+  .tile .num { font-size: 26px; font-weight: 650; }
+  .tile .label {
+    display: flex; align-items: center; gap: 6px;
+    color: var(--ink-2); font-size: 12px; text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  .tile.zero .num { color: var(--muted); font-weight: 450; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; flex: none; }
+  .sev-critical .dot { background: var(--sev-critical); }
+  .sev-high     .dot { background: var(--sev-high); }
+  .sev-medium   .dot { background: var(--sev-medium); }
+  .sev-low      .dot { background: var(--sev-low); }
+  .sev-info     .dot { background: var(--sev-info); }
+
+  .scanners {
+    color: var(--ink-2); font-size: 13px; margin: 0 0 28px;
+  }
+  .scanners span { margin-right: 14px; }
+  .scanners .n { font-variant-numeric: tabular-nums; color: var(--ink); font-weight: 600; }
+
+  h2 { font-size: 15px; margin: 28px 0 10px; }
+
+  .finding {
+    background: var(--surface);
+    border: 1px solid var(--hairline);
+    border-radius: 8px;
+    margin-bottom: 8px;
+  }
+  .finding summary {
+    display: grid;
+    grid-template-columns: 92px 1fr auto;
+    align-items: baseline;
+    gap: 10px;
+    padding: 10px 14px;
+    cursor: pointer;
+    list-style: none;
+  }
+  .finding summary::-webkit-details-marker { display: none; }
+  .sev {
+    display: inline-flex; align-items: center; gap: 6px;
+    font-size: 12px; font-weight: 600; text-transform: uppercase;
+    letter-spacing: 0.04em; color: var(--ink-2);
+  }
+  .finding .title { font-weight: 550; overflow-wrap: anywhere; }
+  .finding .where {
+    color: var(--muted); font-size: 12px; text-align: right;
+    font-variant-numeric: tabular-nums; overflow-wrap: anywhere;
+  }
+  .finding .body {
+    border-top: 1px solid var(--grid);
+    padding: 10px 14px 12px;
+    font-size: 14px; color: var(--ink-2);
+  }
+  .finding .body p { margin: 6px 0; overflow-wrap: anywhere; }
+  .finding .body dt {
+    font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em;
+    color: var(--muted); margin-top: 10px;
+  }
+  .finding .body dd { margin: 2px 0 0; }
+  .finding .body a { color: inherit; }
+  .empty {
+    background: var(--surface); border: 1px solid var(--hairline);
+    border-radius: 8px; padding: 28px; text-align: center; color: var(--ink-2);
+  }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>BANNIN security report</h1>
+    <p class="meta">
+      Target <strong>{{.Target}}</strong>
+      &nbsp;·&nbsp; {{.Total}} finding{{if ne .Total 1}}s{{end}}
+      &nbsp;·&nbsp; {{.GeneratedAt.Format "2006-01-02 15:04 MST"}}
+    </p>
+  </header>
+
+  <div class="tiles">
+    {{range .Tiles}}
+    <div class="tile sev-{{.Severity}}{{if eq .Count 0}} zero{{end}}">
+      <div class="num">{{.Count}}</div>
+      <div class="label"><span class="dot"></span>{{.Severity}}</div>
+    </div>
+    {{end}}
+  </div>
+
+  {{if .Scanners}}
+  <p class="scanners">
+    {{range .Scanners}}<span>{{.Name}} <span class="n">{{.Count}}</span></span>{{end}}
+  </p>
+  {{end}}
+
+  <h2>Findings</h2>
+  {{if not .Findings}}
+  <div class="empty">No findings.</div>
+  {{end}}
+  {{range .Findings}}
+  <details class="finding">
+    <summary>
+      <span class="sev sev-{{.Severity}}"><span class="dot"></span>{{.Severity}}</span>
+      <span class="title">{{.Title}}</span>
+      <span class="where">{{.Scanner}}{{with .Location.Path}} · {{.}}{{end}}{{with .Location.StartLine}}:{{.}}{{end}}</span>
+    </summary>
+    <div class="body">
+      {{with .Description}}<p>{{.}}</p>{{end}}
+      <dl>
+        <dt>Rule</dt><dd>{{.RuleID}}</dd>
+        {{with .CWE}}<dt>CWE</dt><dd>{{range $i, $c := .}}{{if $i}}, {{end}}{{$c}}{{end}}</dd>{{end}}
+        {{with .Metadata}}
+          {{$pkg := index . "package"}}{{$ver := index . "version"}}
+          {{if $pkg}}<dt>Package</dt><dd>{{$pkg}}{{if $ver}}@{{$ver}}{{end}}</dd>{{end}}
+        {{end}}
+        {{with .References}}
+        <dt>References</dt>
+        {{range .}}<dd><a href="{{.}}" rel="noopener noreferrer">{{.}}</a></dd>{{end}}
+        {{end}}
+      </dl>
+    </div>
+  </details>
+  {{end}}
+</main>
+</body>
+</html>
