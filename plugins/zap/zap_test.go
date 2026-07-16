@@ -2,8 +2,10 @@ package zap
 
 import (
 	"context"
+	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -32,6 +34,32 @@ cat > "$out" <<'EOF'
 {"site":[{"@name":"http://127.0.0.1:5000","alerts":[{"pluginid":"10038","alert":"Content Security Policy (CSP) Header Not Set","riskcode":"2","riskdesc":"Medium (High)","desc":"<p>CSP helps detect and mitigate certain attacks.</p>","solution":"<p>Set the CSP header.</p>","reference":"<p>https://developer.mozilla.org/en-US/docs/Web/HTTP/CSP</p><p>https://owasp.org/www-community/controls/Content_Security_Policy</p>","cweid":"693","instances":[{"uri":"http://127.0.0.1:5000/login","method":"GET"}]}]}]}
 EOF
 echo "Attack complete"
+exit 0
+`
+	path := filepath.Join(t.TempDir(), "zap.sh")
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+// fakeZapRecordingArgs is like fakeZap but also writes the full argument
+// line it was called with to argsFile, so a test can assert which flags
+// Run passed. It still produces a report so Run succeeds.
+func fakeZapRecordingArgs(t *testing.T, argsFile string) string {
+	t.Helper()
+
+	script := `#!/bin/sh
+echo "$@" > "` + argsFile + `"
+out=""
+prev=""
+for arg in "$@"; do
+  if [ "$prev" = "-quickout" ]; then out="$arg"; fi
+  prev="$arg"
+done
+cat > "$out" <<'EOF'
+{"site":[]}
+EOF
 exit 0
 `
 	path := filepath.Join(t.TempDir(), "zap.sh")
@@ -72,6 +100,44 @@ func TestResolveBinFallsBackToNameWhenNotFoundAnywhere(t *testing.T) {
 
 	if got := resolveBin(); got != "zap.sh" {
 		t.Errorf("resolveBin() = %q, want bare %q", got, "zap.sh")
+	}
+}
+
+func TestFreePortReturnsUsablePort(t *testing.T) {
+	port, err := freePort()
+	if err != nil {
+		t.Fatalf("freePort() error: %v", err)
+	}
+	if port <= 0 || port > 65535 {
+		t.Fatalf("freePort() = %d, want a valid TCP port", port)
+	}
+	// It should actually be bindable (i.e. genuinely free right now).
+	l, err := net.Listen("tcp", "127.0.0.1:"+strconv.Itoa(port))
+	if err != nil {
+		t.Fatalf("port %d reported free but isn't bindable: %v", port, err)
+	}
+	l.Close()
+}
+
+// TestRunPassesOwnProxyPort guards the fix for ZAP colliding with
+// bannin serve on 8080: Run must hand ZAP an explicit -port so its
+// proxy never grabs the default. The fake records the args it was
+// invoked with.
+func TestRunPassesOwnProxyPort(t *testing.T) {
+	argsFile := filepath.Join(t.TempDir(), "args")
+	p := &Plugin{bin: fakeZapRecordingArgs(t, argsFile)}
+
+	if _, err := p.Run(context.Background(), "http://127.0.0.1:5000"); err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+
+	recorded, err := os.ReadFile(argsFile)
+	if err != nil {
+		t.Fatalf("fake zap did not record its args: %v", err)
+	}
+	got := string(recorded)
+	if !strings.Contains(got, "-port ") {
+		t.Errorf("ZAP args = %q, want an explicit -port so it doesn't grab the default 8080", got)
 	}
 }
 

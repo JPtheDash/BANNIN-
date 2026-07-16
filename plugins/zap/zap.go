@@ -6,13 +6,29 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/jyotidash/bannin/pkg/plugin"
 )
+
+// freePort asks the OS for an unused TCP port on the loopback interface
+// and returns it. There's an unavoidable gap between closing the probe
+// listener and ZAP binding the port, but on a local machine that's
+// effectively never a problem — and it's far better than ZAP's fixed
+// 8080 default, which reliably collides with `bannin serve`.
+func freePort() (int, error) {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return 0, err
+	}
+	defer l.Close()
+	return l.Addr().(*net.TCPAddr).Port, nil
+}
 
 // Plugin wraps the OWASP ZAP CLI (https://www.zaproxy.org) in headless
 // quick-scan mode. bin is resolved once at construction time and is
@@ -90,7 +106,16 @@ func (p *Plugin) Run(ctx context.Context, target string) (plugin.RawResult, erro
 	defer os.RemoveAll(dir)
 	reportPath := filepath.Join(dir, "report.json")
 
-	cmd := exec.CommandContext(ctx, p.bin, "-cmd", "-quickurl", target, "-quickout", reportPath, "-quickprogress")
+	// Even in -cmd quick-scan mode ZAP starts its local proxy, defaulting
+	// to port 8080 — the same port `bannin serve` typically listens on,
+	// which makes ZAP die with "Address already in use". Give it its own
+	// free port so the two never collide.
+	args := []string{"-cmd", "-quickurl", target, "-quickout", reportPath, "-quickprogress"}
+	if port, err := freePort(); err == nil {
+		args = append(args, "-port", strconv.Itoa(port))
+	}
+
+	cmd := exec.CommandContext(ctx, p.bin, args...)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
