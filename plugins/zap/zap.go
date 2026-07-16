@@ -15,15 +15,42 @@ import (
 )
 
 // Plugin wraps the OWASP ZAP CLI (https://www.zaproxy.org) in headless
-// quick-scan mode. bin defaults to "zap.sh" resolved from PATH and is
+// quick-scan mode. bin is resolved once at construction time and is
 // overridable so tests can substitute a fake binary.
 type Plugin struct {
 	bin string
 }
 
-// New returns a ZAP plugin that invokes "zap.sh" from PATH.
+// New returns a ZAP plugin that invokes zap.sh, preferring PATH but
+// falling back to the well-known locations install-tools.sh installs
+// to. bannin serve is often started by a process (a background shell,
+// a service manager, an already-running server predating a fresh
+// install) that never picked up a PATH update from a shell profile —
+// checking the known install locations directly means ZAP works
+// regardless of that.
 func New() *Plugin {
-	return &Plugin{bin: "zap.sh"}
+	return &Plugin{bin: resolveBin()}
+}
+
+func resolveBin() string {
+	const name = "zap.sh"
+	if _, err := exec.LookPath(name); err == nil {
+		return name
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return name
+	}
+	for _, candidate := range []string{
+		filepath.Join(home, ".local", "bin", name),
+		filepath.Join(home, ".local", "opt", "zap", name),
+		"/Applications/OWASP ZAP.app/Contents/Java/zap.sh",
+	} {
+		if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
+			return candidate
+		}
+	}
+	return name
 }
 
 func (p *Plugin) Name() string { return "zap" }

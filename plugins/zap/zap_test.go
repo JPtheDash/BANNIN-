@@ -47,6 +47,34 @@ func TestName(t *testing.T) {
 	}
 }
 
+func TestResolveBinFallsBackToKnownInstallLocation(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("PATH", t.TempDir()) // deliberately excludes zap.sh
+
+	bindir := filepath.Join(home, ".local", "bin")
+	if err := os.MkdirAll(bindir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	fake := filepath.Join(bindir, "zap.sh")
+	if err := os.WriteFile(fake, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := resolveBin(); got != fake {
+		t.Errorf("resolveBin() = %q, want %q", got, fake)
+	}
+}
+
+func TestResolveBinFallsBackToNameWhenNotFoundAnywhere(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("PATH", t.TempDir())
+
+	if got := resolveBin(); got != "zap.sh" {
+		t.Errorf("resolveBin() = %q, want bare %q", got, "zap.sh")
+	}
+}
+
 func TestVersionUsesFakeBinary(t *testing.T) {
 	p := &Plugin{bin: fakeZap(t)}
 	if got := p.Version(); got != "2.17.0-fake" {
