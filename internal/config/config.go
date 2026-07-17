@@ -29,8 +29,47 @@ type ScanConfig struct {
 // "full" drives ZAP's automation framework through the full active-scan
 // policy, probing for injection-class vulnerabilities at the cost of a
 // much longer, more aggressive scan. Empty means quick.
+//
+// Ajax adds ZAP's AJAX spider (a real headless browser crawl) to a full
+// scan so JavaScript-heavy single-page apps get discovered — the plain
+// spider only sees links in static HTML. Browser picks which headless
+// browser it drives. Ajax is ignored in quick mode.
+//
+// Auth, when set, lets the scan reach pages behind a login. See
+// ZapAuthConfig; it only applies to full mode.
 type ZapConfig struct {
-	Mode string `mapstructure:"mode"`
+	Mode    string        `mapstructure:"mode"`
+	Ajax    bool          `mapstructure:"ajax"`
+	Browser string        `mapstructure:"browser"`
+	Auth    ZapAuthConfig `mapstructure:"auth"`
+}
+
+// ZapAuthConfig describes how ZAP authenticates to the target so it can
+// scan authenticated pages. Method picks the scheme:
+//
+//   - "form"    — POST username/password to LoginURL (classic web apps)
+//   - "json"    — POST credentials as a JSON body (SPA/API backends)
+//   - "header"  — send a static header (e.g. Authorization: Bearer …) on
+//     every request (token/API auth); needs no login round-trip
+//   - "browser" — drive a headless browser to fill and submit the login
+//     form (JS-heavy apps); reuses the AJAX browser
+//
+// Credentials are secrets: prefer the BANNIN_ZAP_AUTH_PASSWORD and
+// BANNIN_ZAP_AUTH_TOKEN environment variables over writing Password/Token
+// into bannin.yaml. LoggedInRegex / LoggedOutRegex let ZAP tell whether a
+// response is still authenticated so it can re-login when the session
+// drops; supplying at least one sharply improves authenticated coverage.
+type ZapAuthConfig struct {
+	Method         string `mapstructure:"method"`
+	LoginURL       string `mapstructure:"login_url"`
+	Username       string `mapstructure:"username"`
+	Password       string `mapstructure:"password"`
+	UsernameField  string `mapstructure:"username_field"`
+	PasswordField  string `mapstructure:"password_field"`
+	Header         string `mapstructure:"header"`
+	Token          string `mapstructure:"token"`
+	LoggedInRegex  string `mapstructure:"logged_in_regex"`
+	LoggedOutRegex string `mapstructure:"logged_out_regex"`
 }
 
 type ReportConfig struct {
@@ -87,6 +126,10 @@ var validZapModes = map[string]bool{
 	"quick": true, "full": true,
 }
 
+var validZapAuthMethods = map[string]bool{
+	"form": true, "json": true, "header": true, "browser": true,
+}
+
 // Load reads BANNIN configuration from the given YAML file path, layered
 // over built-in defaults. If path is empty, Load looks for ./bannin.yaml
 // and falls back to defaults alone when no such file exists.
@@ -97,6 +140,17 @@ func Load(path string) (*Config, error) {
 	v.SetEnvPrefix("bannin")
 	if err := v.BindEnv("server.auth_token", "BANNIN_AUTH_TOKEN"); err != nil {
 		return nil, fmt.Errorf("config: binding BANNIN_AUTH_TOKEN: %w", err)
+	}
+	// ZAP auth credentials are secrets — bind env vars so they never have
+	// to live in bannin.yaml.
+	for key, env := range map[string]string{
+		"zap.auth.password": "BANNIN_ZAP_AUTH_PASSWORD",
+		"zap.auth.token":    "BANNIN_ZAP_AUTH_TOKEN",
+		"zap.auth.username": "BANNIN_ZAP_AUTH_USERNAME",
+	} {
+		if err := v.BindEnv(key, env); err != nil {
+			return nil, fmt.Errorf("config: binding %s: %w", env, err)
+		}
 	}
 
 	if path != "" {
@@ -139,6 +193,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("server.port", 8080)
 	v.SetDefault("logging.level", "info")
 	v.SetDefault("zap.mode", "quick")
+	v.SetDefault("zap.browser", "chrome-headless")
 }
 
 // Validate checks that the configured values are within the set BANNIN
@@ -158,6 +213,35 @@ func (c *Config) Validate() error {
 	}
 	if c.Zap.Mode != "" && !validZapModes[c.Zap.Mode] {
 		return fmt.Errorf("config: zap.mode %q must be one of quick, full", c.Zap.Mode)
+	}
+	if err := c.Zap.Auth.validate(); err != nil {
+		return err
+	}
+	return nil
+}
+
+// validate checks the ZAP auth block is internally consistent: a known
+// method, and the fields that method actually needs. Empty method means
+// no authentication (unauthenticated scan), which is always valid.
+func (a ZapAuthConfig) validate() error {
+	if a.Method == "" {
+		return nil
+	}
+	if !validZapAuthMethods[a.Method] {
+		return fmt.Errorf("config: zap.auth.method %q must be one of form, json, header, browser", a.Method)
+	}
+	switch a.Method {
+	case "header":
+		if a.Token == "" {
+			return fmt.Errorf("config: zap.auth.method %q requires zap.auth.token (or BANNIN_ZAP_AUTH_TOKEN)", a.Method)
+		}
+	default: // form, json, browser
+		if a.LoginURL == "" {
+			return fmt.Errorf("config: zap.auth.method %q requires zap.auth.login_url", a.Method)
+		}
+		if a.Username == "" || a.Password == "" {
+			return fmt.Errorf("config: zap.auth.method %q requires zap.auth.username and zap.auth.password (password via BANNIN_ZAP_AUTH_PASSWORD)", a.Method)
+		}
 	}
 	return nil
 }

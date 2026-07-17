@@ -91,11 +91,47 @@ from the browser — paste a target, pick scanners (or let it choose), and
 watch the scanner's live activity (spider/active-scan phases and elapsed
 time) stream in until the results land.
 
+### Scanning web apps properly
+
 For URL targets, set `zap.mode` to `full` to run ZAP's full active-scan
 policy — it probes for injection-class vulnerabilities (SQLi, XSS,
 command injection) instead of only header/config hygiene. It's much
 slower and far more aggressive, so only point it at systems you're
 authorized to actively scan.
+
+```yaml
+zap:
+  mode: "full"
+  ajax: true          # crawl JavaScript apps with a headless browser
+  auth:
+    method: "form"    # form | json | header | browser
+    login_url: "https://your-app/login"
+    username: "tester"
+    logged_in_regex: "Logout"
+```
+
+- **`ajax: true`** adds ZAP's AJAX spider — a real headless browser
+  crawl. The plain spider only reads links out of static HTML, so a
+  single-page app looks almost empty to it. On a React app the AJAX
+  spider found 1,734 URLs where the plain spider found 27.
+- **`auth`** lets the scan reach pages behind a login, which is where
+  most real vulnerabilities live. Four methods: `form` (POST
+  username/password), `json` (JSON login for SPA/API backends),
+  `header` (a static `Authorization`/API-key header), and `browser`
+  (drive the headless browser through the login form).
+
+Credentials are secrets — pass them by environment variable, never in
+`bannin.yaml`:
+
+```bash
+export BANNIN_ZAP_AUTH_USERNAME=tester
+export BANNIN_ZAP_AUTH_PASSWORD='…'
+export BANNIN_ZAP_AUTH_TOKEN='Bearer …'   # for method: header
+```
+
+Setting `logged_in_regex` (or `logged_out_regex`) is worth the minute it
+takes — it's how ZAP notices the session dropped and logs back in,
+instead of quietly scanning logged-out pages.
 
 Set `server.auth_token` in your config (or the `BANNIN_AUTH_TOKEN` env
 var) if the dashboard is reachable by anyone you don't trust.

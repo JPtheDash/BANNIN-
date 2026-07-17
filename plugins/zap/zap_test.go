@@ -124,7 +124,7 @@ func TestBuildArgsDispatchesOnMode(t *testing.T) {
 // extra YAML structure.
 func TestFullScanPlanIsInjectionSafe(t *testing.T) {
 	evil := "http://x\"]}\njobs: []\nenv:\n  bogus: true # "
-	plan := fullScanPlan(evil, "/tmp/out")
+	plan := New().fullScanPlan(evil, "/tmp/out")
 
 	// The whole target should appear as one JSON/YAML-escaped string; the
 	// injected newlines become \n inside that string, so no bare "jobs:"
@@ -136,6 +136,91 @@ func TestFullScanPlanIsInjectionSafe(t *testing.T) {
 	}
 	if !strings.Contains(plan, "activeScan") || !strings.Contains(plan, "traditional-json") {
 		t.Errorf("plan missing expected jobs:\n%s", plan)
+	}
+}
+
+func TestFullScanPlanAjaxJob(t *testing.T) {
+	p := New()
+	p.SetMode(ModeFull)
+	if strings.Contains(p.fullScanPlan("http://x/", "/d"), "spiderAjax") {
+		t.Error("ajax job present without SetAjax(true)")
+	}
+	p.SetAjax(true, "firefox-headless")
+	plan := p.fullScanPlan("http://x/", "/d")
+	if !strings.Contains(plan, "type: spiderAjax") {
+		t.Error("ajax enabled but no spiderAjax job in plan")
+	}
+	if !strings.Contains(plan, `browserId: "firefox-headless"`) {
+		t.Errorf("ajax job missing configured browser:\n%s", plan)
+	}
+}
+
+func TestFullScanPlanFormAuth(t *testing.T) {
+	p := New()
+	p.SetMode(ModeFull)
+	p.SetAuth(AuthConfig{
+		Method: "form", LoginURL: "http://x/login",
+		Username: "admin", Password: "s3cret",
+		UsernameField: "email", PasswordField: "pass",
+		LoggedInRegex: "Logout",
+	})
+	plan := p.fullScanPlan("http://x/", "/d")
+	for _, want := range []string{
+		`method: "form"`,
+		`loginRequestUrl: "http://x/login"`,
+		"email={%username%}", // custom field names wired into the body
+		"pass={%password%}",
+		`username: "admin"`,
+		`password: "s3cret"`,
+		"loggedInRegex: \"Logout\"",
+		"user: bannin-user", // spider + activeScan run as the logged-in user
+	} {
+		if !strings.Contains(plan, want) {
+			t.Errorf("form-auth plan missing %q:\n%s", want, plan)
+		}
+	}
+}
+
+// TestHeaderAuthUsesReplacerNotContext confirms token/header auth is
+// injected via ZAP's Replacer (-config args) and does NOT add a context
+// authentication block (which would be the wrong mechanism for a static
+// header).
+func TestHeaderAuthUsesReplacerNotContext(t *testing.T) {
+	p := New()
+	p.SetMode(ModeFull)
+	p.SetAuth(AuthConfig{Method: "header", Header: "X-API-Key", Token: "abc123"})
+
+	plan := p.fullScanPlan("http://x/", "/d")
+	if strings.Contains(plan, "authentication:") || strings.Contains(plan, "user: bannin-user") {
+		t.Errorf("header auth should not add a context login:\n%s", plan)
+	}
+
+	dir := t.TempDir()
+	args, err := p.buildArgs(dir, "http://x/", filepath.Join(dir, "report.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	joined := strings.Join(args, " ")
+	if !strings.Contains(joined, "matchstr=X-API-Key") || !strings.Contains(joined, "replacement=abc123") {
+		t.Errorf("header auth missing replacer config args: %v", args)
+	}
+}
+
+// TestAuthCredentialsInjectionSafe confirms a credential containing YAML
+// metacharacters can't break out of the plan structure.
+func TestAuthCredentialsInjectionSafe(t *testing.T) {
+	p := New()
+	p.SetMode(ModeFull)
+	p.SetAuth(AuthConfig{
+		Method: "form", LoginURL: "http://x/login",
+		Username: "admin",
+		Password: "pw\"\n      injected: true\nbogus: ",
+	})
+	plan := p.fullScanPlan("http://x/", "/d")
+	for _, line := range strings.Split(plan, "\n") {
+		if s := strings.TrimSpace(line); s == "injected: true" || s == "bogus:" {
+			t.Fatalf("credential escaped into plan structure:\n%s", plan)
+		}
 	}
 }
 

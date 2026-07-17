@@ -31,12 +31,31 @@ func init() {
 
 // applyPluginConfig applies loaded configuration to already-registered
 // plugins (registration happens in init, before any config is read).
-// Currently only the ZAP plugin has runtime-configurable behavior — its
-// scan depth. Call it after config.Load, before running a scan.
+// Only the ZAP plugin has runtime-configurable behavior — scan depth,
+// the AJAX spider, and authentication. Call it after config.Load, before
+// running a scan.
 func applyPluginConfig(registry *scanner.Registry, cfg *config.Config) {
-	if s, ok := registry.Lookup("zap"); ok {
-		if z, ok := s.(*zap.Plugin); ok {
-			z.SetMode(cfg.Zap.Mode)
-		}
+	s, ok := registry.Lookup("zap")
+	if !ok {
+		return
 	}
+	z, ok := s.(*zap.Plugin)
+	if !ok {
+		return
+	}
+	z.SetMode(cfg.Zap.Mode)
+	z.SetAjax(cfg.Zap.Ajax, cfg.Zap.Browser)
+	a := cfg.Zap.Auth
+	z.SetAuth(zap.AuthConfig{
+		Method:         a.Method,
+		LoginURL:       a.LoginURL,
+		Username:       a.Username,
+		Password:       a.Password,
+		UsernameField:  a.UsernameField,
+		PasswordField:  a.PasswordField,
+		Header:         a.Header,
+		Token:          a.Token,
+		LoggedInRegex:  a.LoggedInRegex,
+		LoggedOutRegex: a.LoggedOutRegex,
+	})
 }

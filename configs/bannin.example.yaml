@@ -51,3 +51,30 @@ logging:
 # only point it at systems you're authorized to actively scan.
 zap:
   mode: "quick"
+  # ajax: true adds ZAP's AJAX spider (a real headless browser crawl) to
+  # a full scan so JavaScript single-page apps get discovered — the plain
+  # spider only sees links in static HTML. Needs Chrome/Chromium/Firefox
+  # installed (install-tools.sh sets one up). Ignored in quick mode.
+  ajax: false
+  browser: "chrome-headless" # or firefox-headless
+
+  # auth: scan pages behind a login (full mode only). Pick a method:
+  #   form    — POST username/password to login_url (classic web apps)
+  #   json    — POST credentials as JSON (SPA / API backends)
+  #   header  — send a static header on every request (token/API auth)
+  #   browser — drive the headless browser to log in (JS-heavy apps)
+  # Credentials are SECRETS — set them via environment variables, not here:
+  #   BANNIN_ZAP_AUTH_USERNAME, BANNIN_ZAP_AUTH_PASSWORD, BANNIN_ZAP_AUTH_TOKEN
+  # logged_in_regex / logged_out_regex let ZAP detect when the session
+  # drops and re-login; supplying one greatly improves coverage.
+  auth:
+    method: "" # "" = unauthenticated (default)
+    login_url: ""
+    username: ""
+    # password: via BANNIN_ZAP_AUTH_PASSWORD
+    username_field: "username"
+    password_field: "password"
+    header: "Authorization" # header method: header name
+    # token: via BANNIN_ZAP_AUTH_TOKEN  (e.g. "Bearer eyJ...")
+    logged_in_regex: ""
+    logged_out_regex: ""

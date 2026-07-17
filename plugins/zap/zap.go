@@ -69,8 +69,28 @@ func (w *progressWriter) Write(p []byte) (int, error) {
 // quick-scan mode. bin is resolved once at construction time and is
 // overridable so tests can substitute a fake binary.
 type Plugin struct {
-	bin  string
-	mode string
+	bin     string
+	mode    string
+	ajax    bool
+	browser string
+	auth    AuthConfig
+}
+
+// AuthConfig mirrors the auth-related knobs from config.ZapAuthConfig,
+// kept as the plugin's own type so plugins/zap never imports internal
+// packages. cmd/bannin maps config into it. Method is one of "form",
+// "json", "header", "browser", or "" (unauthenticated).
+type AuthConfig struct {
+	Method         string
+	LoginURL       string
+	Username       string
+	Password       string
+	UsernameField  string
+	PasswordField  string
+	Header         string
+	Token          string
+	LoggedInRegex  string
+	LoggedOutRegex string
 }
 
 // Scan modes. Quick is a fast spider + light active scan (ZAP's
@@ -109,6 +129,29 @@ func (p *Plugin) SetMode(mode string) {
 
 // Mode reports the plugin's current scan mode.
 func (p *Plugin) Mode() string { return p.mode }
+
+// SetAjax enables (or disables) the AJAX-spider crawl in full mode and
+// picks the headless browser it drives (e.g. "chrome-headless",
+// "firefox-headless"). An empty browser keeps the current one. Ignored
+// in quick mode.
+func (p *Plugin) SetAjax(enabled bool, browser string) {
+	p.ajax = enabled
+	if browser != "" {
+		p.browser = browser
+	}
+}
+
+// SetAuth configures how full-mode scans authenticate to the target.
+func (p *Plugin) SetAuth(a AuthConfig) { p.auth = a }
+
+// browserID returns the configured headless browser, defaulting to
+// chrome-headless.
+func (p *Plugin) browserID() string {
+	if p.browser == "" {
+		return "chrome-headless"
+	}
+	return p.browser
+}
 
 func resolveBin() string {
 	const name = "zap.sh"
@@ -209,15 +252,22 @@ func (p *Plugin) Run(ctx context.Context, target string) (plugin.RawResult, erro
 // -quickurl. Either way ZAP starts a local proxy that defaults to port
 // 8080 — the same port `bannin serve` typically uses — so both get an
 // OS-assigned free port via -port to avoid "Address already in use".
+//
+// Header ("token") auth isn't a context authentication method — it's a
+// static header injected on every request — so it's wired via ZAP's
+// Replacer add-on through -config args rather than the plan YAML.
 func (p *Plugin) buildArgs(dir, target, reportPath string) ([]string, error) {
 	var args []string
 	switch p.mode {
 	case ModeFull:
 		planPath := filepath.Join(dir, "plan.yaml")
-		if err := os.WriteFile(planPath, []byte(fullScanPlan(target, dir)), 0o600); err != nil {
+		if err := os.WriteFile(planPath, []byte(p.fullScanPlan(target, dir)), 0o600); err != nil {
 			return nil, fmt.Errorf("zap: writing scan plan: %w", err)
 		}
 		args = []string{"-cmd", "-autorun", planPath}
+		if p.auth.Method == "header" {
+			args = append(args, headerAuthConfigArgs(p.auth)...)
+		}
 	default:
 		args = []string{"-cmd", "-quickurl", target, "-quickout", reportPath, "-quickprogress"}
 	}
@@ -227,12 +277,35 @@ func (p *Plugin) buildArgs(dir, target, reportPath string) ([]string, error) {
 	return args, nil
 }
 
-// fullScanPlan renders a ZAP automation-framework plan: spider the
-// target, wait for passive scanning to drain, run the full active-scan
-// policy, then emit a traditional-json report to dir/report.json (the
-// report job appends .json to reportFile). target and dir are
-// JSON-encoded so a hostile URL or path can't break out of the YAML —
-// any JSON scalar is valid YAML.
+// headerAuthConfigArgs builds the -config args that register a ZAP
+// Replacer rule injecting a static auth header (e.g. Authorization:
+// Bearer …) into every request, so token/API-authenticated targets are
+// scanned as an authenticated client. The header name defaults to
+// Authorization.
+func headerAuthConfigArgs(a AuthConfig) []string {
+	name := a.Header
+	if name == "" {
+		name = "Authorization"
+	}
+	set := func(k, v string) string { return "replacer.full_list(0)." + k + "=" + v }
+	return []string{
+		"-config", set("description", "bannin-auth"),
+		"-config", set("enabled", "true"),
+		"-config", set("matchtype", "REQ_HEADER"),
+		"-config", set("matchstr", name),
+		"-config", set("regex", "false"),
+		"-config", set("replacement", a.Token),
+		"-config", set("initiators", ""),
+	}
+}
+
+// fullScanPlan renders a ZAP automation-framework plan: (optionally
+// authenticated) spider the target, optionally AJAX-spider it with a
+// headless browser for JS apps, wait for passive scanning to drain, run
+// the full active-scan policy, then emit a traditional-json report to
+// dir/report.json (the report job appends .json to reportFile). Every
+// interpolated value is JSON-encoded so a hostile URL, path, or
+// credential can't break out of the YAML — any JSON scalar is valid YAML.
 //
 // The context is scoped by includePaths to the target's host on any
 // port, not just the exact start URL. Without that, the automation
@@ -248,38 +321,127 @@ func (p *Plugin) buildArgs(dir, target, reportPath string) ([]string, error) {
 // URLs; an unbounded active scan of all of them can run for hours and
 // then get killed by the timeout mid-flight, writing no report at all —
 // bounded, it returns real (if not exhaustive) results every time.
-func fullScanPlan(target, dir string) string {
+func (p *Plugin) fullScanPlan(target, dir string) string {
 	t := jsonString(target)
-	d := jsonString(dir)
-	scope := jsonString(scopeRegex(target))
-	return `env:
-  contexts:
-    - name: bannin
-      urls: [` + t + `]
-      includePaths:
-        - ` + scope + `
-  parameters:
-    progressToStdout: true
-jobs:
-  - type: spider
-    parameters:
-      context: bannin
-      url: ` + t + `
-      maxDuration: 5
-  - type: passiveScan-wait
-    parameters:
-      maxDuration: 5
-  - type: activeScan
-    parameters:
-      context: bannin
-      maxScanDurationInMins: 20
-      maxRuleDurationInMins: 3
-  - type: report
-    parameters:
-      template: traditional-json
-      reportDir: ` + d + `
-      reportFile: report
-`
+	// user is set on crawl/scan jobs only when the context carries a
+	// login (form/json/browser); header auth injects globally and needs
+	// no context user.
+	user := ""
+	if p.usesContextAuth() {
+		user = "\n      user: bannin-user"
+	}
+
+	var b strings.Builder
+	b.WriteString("env:\n")
+	b.WriteString("  contexts:\n")
+	b.WriteString("    - name: bannin\n")
+	b.WriteString("      urls: [" + t + "]\n")
+	b.WriteString("      includePaths:\n")
+	b.WriteString("        - " + jsonString(scopeRegex(target)) + "\n")
+	b.WriteString(p.authContextYAML(target))
+	b.WriteString("  parameters:\n")
+	b.WriteString("    progressToStdout: true\n")
+	b.WriteString("jobs:\n")
+	b.WriteString("  - type: spider\n")
+	b.WriteString("    parameters:\n")
+	b.WriteString("      context: bannin\n")
+	b.WriteString("      url: " + t + "\n")
+	b.WriteString("      maxDuration: 5" + user + "\n")
+	if p.ajax {
+		b.WriteString("  - type: spiderAjax\n")
+		b.WriteString("    parameters:\n")
+		b.WriteString("      context: bannin\n")
+		b.WriteString("      url: " + t + "\n")
+		b.WriteString("      browserId: " + jsonString(p.browserID()) + "\n")
+		b.WriteString("      maxDuration: 5" + user + "\n")
+	}
+	b.WriteString("  - type: passiveScan-wait\n")
+	b.WriteString("    parameters:\n")
+	b.WriteString("      maxDuration: 5\n")
+	b.WriteString("  - type: activeScan\n")
+	b.WriteString("    parameters:\n")
+	b.WriteString("      context: bannin\n")
+	b.WriteString("      maxScanDurationInMins: 20\n")
+	b.WriteString("      maxRuleDurationInMins: 3" + user + "\n")
+	b.WriteString("  - type: report\n")
+	b.WriteString("    parameters:\n")
+	b.WriteString("      template: traditional-json\n")
+	b.WriteString("      reportDir: " + jsonString(dir) + "\n")
+	b.WriteString("      reportFile: report\n")
+	return b.String()
+}
+
+// usesContextAuth reports whether the auth method is one carried on the
+// ZAP context (a login the spider/scanner performs), as opposed to
+// header auth (a globally-injected static header) or no auth.
+func (p *Plugin) usesContextAuth() bool {
+	switch p.auth.Method {
+	case "form", "json", "browser":
+		return true
+	default:
+		return false
+	}
+}
+
+// authContextYAML renders the authentication / sessionManagement / users
+// block nested under the context (6-space indent), or "" when there's no
+// context-carried login. Field names and credentials are JSON-encoded.
+func (p *Plugin) authContextYAML(target string) string {
+	if !p.usesContextAuth() {
+		return ""
+	}
+	a := p.auth
+	loginURL := a.LoginURL
+	userField := a.UsernameField
+	if userField == "" {
+		userField = "username"
+	}
+	passField := a.PasswordField
+	if passField == "" {
+		passField = "password"
+	}
+
+	var b strings.Builder
+	b.WriteString("      authentication:\n")
+	b.WriteString("        method: " + jsonString(a.Method) + "\n")
+	b.WriteString("        parameters:\n")
+	switch a.Method {
+	case "browser":
+		b.WriteString("          loginPageUrl: " + jsonString(loginURL) + "\n")
+		b.WriteString("          browserId: " + jsonString(p.browserID()) + "\n")
+	case "json":
+		body := `{"` + userField + `":"{%username%}","` + passField + `":"{%password%}"}`
+		b.WriteString("          loginPageUrl: " + jsonString(loginURL) + "\n")
+		b.WriteString("          loginRequestUrl: " + jsonString(loginURL) + "\n")
+		b.WriteString("          loginRequestBody: " + jsonString(body) + "\n")
+	default: // form
+		body := userField + "={%username%}&" + passField + "={%password%}"
+		b.WriteString("          loginPageUrl: " + jsonString(loginURL) + "\n")
+		b.WriteString("          loginRequestUrl: " + jsonString(loginURL) + "\n")
+		b.WriteString("          loginRequestBody: " + jsonString(body) + "\n")
+	}
+	b.WriteString("        verification:\n")
+	if a.LoggedInRegex != "" || a.LoggedOutRegex != "" {
+		b.WriteString("          method: response\n")
+		if a.LoggedInRegex != "" {
+			b.WriteString("          loggedInRegex: " + jsonString(a.LoggedInRegex) + "\n")
+		}
+		if a.LoggedOutRegex != "" {
+			b.WriteString("          loggedOutRegex: " + jsonString(a.LoggedOutRegex) + "\n")
+		}
+	} else {
+		// No indicator supplied — let ZAP infer session state as best it
+		// can rather than assuming every response is authenticated.
+		b.WriteString("          method: autodetect\n")
+	}
+	b.WriteString("      sessionManagement:\n")
+	b.WriteString("        method: cookie\n")
+	b.WriteString("      users:\n")
+	b.WriteString("        - name: bannin-user\n")
+	b.WriteString("          credentials:\n")
+	b.WriteString("            username: " + jsonString(a.Username) + "\n")
+	b.WriteString("            password: " + jsonString(a.Password) + "\n")
+	return b.String()
 }
 
 // scopeRegex builds a ZAP includePaths regex matching the target's host

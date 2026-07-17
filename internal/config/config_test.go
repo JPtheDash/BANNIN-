@@ -110,3 +110,30 @@ func TestValidateAcceptsKnownZapModes(t *testing.T) {
 		}
 	}
 }
+
+func TestValidateZapAuth(t *testing.T) {
+	cases := []struct {
+		name string
+		auth ZapAuthConfig
+		ok   bool
+	}{
+		{"empty method ok", ZapAuthConfig{}, true},
+		{"unknown method", ZapAuthConfig{Method: "kerberos"}, false},
+		{"form complete", ZapAuthConfig{Method: "form", LoginURL: "http://x/login", Username: "u", Password: "p"}, true},
+		{"form missing url", ZapAuthConfig{Method: "form", Username: "u", Password: "p"}, false},
+		{"form missing creds", ZapAuthConfig{Method: "form", LoginURL: "http://x/login"}, false},
+		{"json complete", ZapAuthConfig{Method: "json", LoginURL: "http://x/api/login", Username: "u", Password: "p"}, true},
+		{"browser complete", ZapAuthConfig{Method: "browser", LoginURL: "http://x/login", Username: "u", Password: "p"}, true},
+		{"header with token", ZapAuthConfig{Method: "header", Token: "Bearer x"}, true},
+		{"header missing token", ZapAuthConfig{Method: "header"}, false},
+	}
+	for _, c := range cases {
+		err := (&Config{Zap: ZapConfig{Auth: c.auth}}).Validate()
+		if c.ok && err != nil {
+			t.Errorf("%s: unexpected error: %v", c.name, err)
+		}
+		if !c.ok && err == nil {
+			t.Errorf("%s: expected validation error, got none", c.name)
+		}
+	}
+}

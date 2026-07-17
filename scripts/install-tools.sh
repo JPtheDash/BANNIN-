@@ -207,6 +207,37 @@ install_zap() {
   esac
 }
 
+# ---- headless browser (for ZAP's AJAX spider) ------------------------------
+# ZAP's AJAX spider (zap.ajax / browser-based auth) drives a real headless
+# browser to crawl JavaScript apps. ZAP's Selenium add-on provisions the
+# webdriver itself, but the browser binary has to exist. Detect one; only
+# install if none is found, since browsers are large and many machines
+# already have Chrome. Best-effort — a failure just warns (plain full scans
+# without --ajax don't need it).
+browser_present() {
+  have google-chrome || have google-chrome-stable || have chromium || have chromium-browser || have firefox \
+    || [ -x "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" ] \
+    || [ -x "/Applications/Chromium.app/Contents/MacOS/Chromium" ] \
+    || [ -x "/Applications/Firefox.app/Contents/MacOS/firefox" ]
+}
+
+install_browser() {
+  $SKIP_ZAP && return 0
+  wants zap || return 0
+  log "headless browser (ZAP AJAX spider)"
+  if browser_present; then ok "a browser is already installed"; return 0; fi
+  if $BREW_AVAILABLE; then
+    warn "installing Chromium for the AJAX spider"
+    brew install --cask chromium || warn "Chromium install failed; install Chrome/Chromium manually if you use --ajax"
+  elif $APT_AVAILABLE; then
+    warn "installing Chromium for the AJAX spider"
+    sudo apt-get update -y && sudo apt-get install -y chromium || sudo apt-get install -y chromium-browser \
+      || warn "Chromium install failed; install Chrome/Chromium manually if you use --ajax"
+  else
+    warn "no browser found and no supported installer; install Chrome/Chromium/Firefox if you use ZAP's AJAX spider"
+  fi
+}
+
 if $CI_MODE; then
   export DEBIAN_FRONTEND=noninteractive
 fi
@@ -217,6 +248,7 @@ install_trivy
 install_gitleaks
 install_checkov
 install_zap
+install_browser
 
 log "prerequisite check (not installed by this script)"
 if have go; then ok "go: $(go version)"; else warn "go not found — https://go.dev/dl/ (BANNIN needs 1.24+)"; fi

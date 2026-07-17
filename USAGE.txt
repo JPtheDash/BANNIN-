@@ -109,6 +109,54 @@ There are two ways to use it. Pick one, or use both.
    actively attack).
 
 
+SCANNING A REAL WEB APP (JS + LOGIN)
+-------------------------------------
+
+   Most real apps are a JavaScript front end with everything behind a
+   login. Two settings handle that (both full mode only):
+
+   1) JavaScript apps — turn on the AJAX spider:
+
+          zap:
+            mode: "full"
+            ajax: true
+
+      The normal spider only reads links out of static HTML, so a
+      single-page app looks nearly empty to it. The AJAX spider drives
+      a real headless browser instead. (Needs Chrome/Chromium/Firefox —
+      install-tools.sh sets one up.)
+
+   2) Pages behind a login — configure auth:
+
+          zap:
+            mode: "full"
+            auth:
+              method: "form"     # form | json | header | browser
+              login_url: "https://your-app/login"
+              username: "tester"
+              username_field: "username"   # your form's field names
+              password_field: "password"
+              logged_in_regex: "Logout"    # how ZAP knows it's logged in
+
+      Which method:
+        form    - normal login form (POST username + password)
+        json    - login endpoint taking a JSON body (SPA/API backends)
+        header  - static token header, e.g. Authorization: Bearer xxx
+        browser - headless browser fills the login form (JS-heavy apps)
+
+      PASSWORDS/TOKENS ARE SECRETS. Do not put them in bannin.yaml.
+      Pass them as environment variables:
+
+          export BANNIN_ZAP_AUTH_USERNAME=tester
+          export BANNIN_ZAP_AUTH_PASSWORD='your-password'
+          export BANNIN_ZAP_AUTH_TOKEN='Bearer eyJ...'   # method: header
+
+      Set logged_in_regex (some text only logged-in pages show, like
+      "Logout") — that's how ZAP notices the session expired and logs
+      back in. Without it, a scan can silently end up testing only
+      logged-out pages.
+
+
 THE SHORT VERSION
 ------------------
 - CI/CD  = "bannin scan" in your pipeline, fails the build on bad findings.
