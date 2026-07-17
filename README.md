@@ -87,8 +87,15 @@ prints (default `http://127.0.0.1:8080`).
 The dashboard shows a security score, severity and category breakdowns,
 scan history, a searchable findings table with full detail per finding,
 and the health of each scanner. You can also kick off new scans directly
-from the browser — paste a target, pick scanners (or let it choose),
-and watch the result land.
+from the browser — paste a target, pick scanners (or let it choose), and
+watch the scanner's live activity (spider/active-scan phases and elapsed
+time) stream in until the results land.
+
+For URL targets, set `zap.mode` to `full` to run ZAP's full active-scan
+policy — it probes for injection-class vulnerabilities (SQLi, XSS,
+command injection) instead of only header/config hygiene. It's much
+slower and far more aggressive, so only point it at systems you're
+authorized to actively scan.
 
 Set `server.auth_token` in your config (or the `BANNIN_AUTH_TOKEN` env
 var) if the dashboard is reachable by anyone you don't trust.

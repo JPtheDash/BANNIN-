@@ -1,6 +1,7 @@
 package main
 
 import (
+	"github.com/jyotidash/bannin/internal/config"
 	"github.com/jyotidash/bannin/internal/scanner"
 	"github.com/jyotidash/bannin/plugins/checkov"
 	"github.com/jyotidash/bannin/plugins/gitleaks"
@@ -26,4 +27,16 @@ func registerPlugins(registry *scanner.Registry) {
 
 func init() {
 	registerPlugins(scanner.DefaultRegistry)
+}
+
+// applyPluginConfig applies loaded configuration to already-registered
+// plugins (registration happens in init, before any config is read).
+// Currently only the ZAP plugin has runtime-configurable behavior — its
+// scan depth. Call it after config.Load, before running a scan.
+func applyPluginConfig(registry *scanner.Registry, cfg *config.Config) {
+	if s, ok := registry.Lookup("zap"); ok {
+		if z, ok := s.(*zap.Plugin); ok {
+			z.SetMode(cfg.Zap.Mode)
+		}
+	}
 }

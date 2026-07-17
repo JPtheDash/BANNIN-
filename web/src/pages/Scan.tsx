@@ -13,13 +13,16 @@ export default function Scan() {
   const [target, setTarget] = useState("");
   const [plugins, setPlugins] = useState<string[]>([]);
   const [phase, setPhase] = useState<Phase>({ kind: "idle" });
+  const [elapsed, setElapsed] = useState(0);
   const pollRef = useRef<number | null>(null);
+  const clockRef = useRef<number | null>(null);
 
   const isURL = /^https?:\/\//.test(target.trim());
 
   useEffect(() => {
     return () => {
       if (pollRef.current !== null) window.clearInterval(pollRef.current);
+      if (clockRef.current !== null) window.clearInterval(clockRef.current);
     };
   }, []);
 
@@ -27,25 +30,41 @@ export default function Scan() {
     setPlugins((ps) => (ps.includes(name) ? ps.filter((p) => p !== name) : [...ps, name]));
   }
 
+  function stopClock() {
+    if (clockRef.current !== null) {
+      window.clearInterval(clockRef.current);
+      clockRef.current = null;
+    }
+  }
+
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     if (pollRef.current !== null) window.clearInterval(pollRef.current);
+    stopClock();
     try {
       const job = await triggerScan(target.trim(), plugins.length > 0 ? plugins : undefined);
       setPhase({ kind: "job", job });
+      // Client-side elapsed clock: reassures during long, quiet phases
+      // (ZAP's active scan can run minutes without emitting a new line).
+      const startedAt = Date.now();
+      setElapsed(0);
+      clockRef.current = window.setInterval(() => setElapsed(Math.floor((Date.now() - startedAt) / 1000)), 1000);
       pollRef.current = window.setInterval(async () => {
         try {
           const updated = await fetchScanStatus(job.id);
           setPhase({ kind: "job", job: updated });
           if (updated.status !== "running" && pollRef.current !== null) {
             window.clearInterval(pollRef.current);
+            stopClock();
           }
         } catch (err) {
           if (pollRef.current !== null) window.clearInterval(pollRef.current);
+          stopClock();
           setPhase({ kind: "error", message: err instanceof ApiError ? err.message : String(err) });
         }
       }, 2000);
     } catch (err) {
+      stopClock();
       setPhase({ kind: "error", message: err instanceof ApiError ? err.message : String(err) });
     }
   }
@@ -132,9 +151,11 @@ export default function Scan() {
           {phase.job.status === "running" && (
             <p className="mt-2 text-xs text-[var(--color-muted)]">
               Running in the background — this page polls automatically. ZAP scans of a real app can take a few
-              minutes.
+              minutes. <span className="text-[var(--color-muted-2)]">Elapsed {formatElapsed(elapsed)}.</span>
             </p>
           )}
+
+          <ProgressLog lines={phase.job.progress} running={phase.job.status === "running"} />
 
           {phase.job.status === "failed" && (
             <p className="mt-2 text-xs text-sev-critical">{phase.job.error ?? "Scan failed."}</p>
@@ -155,6 +176,46 @@ export default function Scan() {
       )}
     </div>
   );
+}
+
+// ProgressLog shows the scanner's live output (spider/active-scan
+// phases, percentages) so a long scan reports what it's doing instead of
+// an opaque "running". It auto-scrolls to the newest line.
+function ProgressLog({ lines, running }: { lines?: string[]; running: boolean }) {
+  const endRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    endRef.current?.scrollIntoView({ block: "end" });
+  }, [lines]);
+
+  if (!lines || lines.length === 0) {
+    if (!running) return null;
+    return (
+      <p className="mt-3 text-xs text-[var(--color-muted-2)]">Waiting for the scanner to report activity…</p>
+    );
+  }
+
+  return (
+    <div className="mt-3">
+      <div className="mb-1 flex items-center gap-2 text-[10px] font-semibold uppercase tracking-wide text-[var(--color-muted)]">
+        {running && <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-running" />}
+        Live activity
+      </div>
+      <div className="max-h-48 overflow-y-auto rounded-lg border border-[var(--color-border)] bg-[var(--color-panel-raised)] p-3 font-mono text-[11px] leading-relaxed text-[var(--color-muted)]">
+        {lines.map((line, i) => (
+          <div key={i} className="whitespace-pre-wrap break-words">
+            {line}
+          </div>
+        ))}
+        <div ref={endRef} />
+      </div>
+    </div>
+  );
+}
+
+function formatElapsed(seconds: number): string {
+  const m = Math.floor(seconds / 60);
+  const s = seconds % 60;
+  return m > 0 ? `${m}m ${s}s` : `${s}s`;
 }
 
 function StatusPill({ status }: { status: ScanJob["status"] }) {

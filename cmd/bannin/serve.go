@@ -14,6 +14,7 @@ import (
 	"github.com/jyotidash/bannin/internal/config"
 	"github.com/jyotidash/bannin/internal/dashboard"
 	"github.com/jyotidash/bannin/internal/logging"
+	"github.com/jyotidash/bannin/internal/scanner"
 	"github.com/jyotidash/bannin/internal/storage"
 )
 
@@ -63,6 +64,7 @@ report.json, which only ever holds the most recent scan.`,
 		if err != nil {
 			return err
 		}
+		applyPluginConfig(scanner.DefaultRegistry, cfg)
 
 		logger, err := logging.New(cfg.Logging.Level, nil)
 		if err != nil {

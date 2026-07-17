@@ -41,3 +41,13 @@ server:
 
 logging:
   level: "info"
+
+# OWASP ZAP (DAST) scan depth, applied to URL targets (from the CLI or
+# the dashboard's New Scan page). "quick" (default) is a fast spider +
+# light active scan that surfaces mostly header/config hygiene issues.
+# "full" drives ZAP's full active-scan policy to probe for injection-
+# class vulnerabilities (SQLi, XSS, command injection) — much deeper,
+# but also much slower and far more aggressive against the target, so
+# only point it at systems you're authorized to actively scan.
+zap:
+  mode: "quick"

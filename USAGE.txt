@@ -97,8 +97,16 @@ There are two ways to use it. Pick one, or use both.
       "New Scan" in the sidebar, paste a target (a URL like
       https://example.com for a live app, or a local folder path),
       pick scanners if you want (leave blank to auto-pick), click
-      "Run scan". It runs in the background and the page shows a
-      "View results" button when it's done.
+      "Run scan". It runs in the background and the page shows the
+      scanner's live activity (spider/active-scan phases) and elapsed
+      time while it works, then a "View results" button when it's done.
+
+   ZAP scan depth: for URL targets, set zap.mode in bannin.yaml to
+   "quick" (default — fast, mostly finds header/config issues) or
+   "full" (runs ZAP's full active-scan policy to probe for injection
+   vulnerabilities like SQLi/XSS — much deeper, much slower, and far
+   more aggressive, so only point it at systems you're allowed to
+   actively attack).
 
 
 THE SHORT VERSION

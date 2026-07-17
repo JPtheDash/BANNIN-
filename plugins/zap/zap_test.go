@@ -75,6 +75,79 @@ func TestName(t *testing.T) {
 	}
 }
 
+func TestSetModeNormalizes(t *testing.T) {
+	p := New()
+	if p.Mode() != ModeQuick {
+		t.Errorf("default mode = %q, want %q", p.Mode(), ModeQuick)
+	}
+	p.SetMode(ModeFull)
+	if p.Mode() != ModeFull {
+		t.Errorf("after SetMode(full), mode = %q, want %q", p.Mode(), ModeFull)
+	}
+	for _, bad := range []string{"", "deep", "QUICK", "garbage"} {
+		p.SetMode(bad)
+		if p.Mode() != ModeQuick {
+			t.Errorf("SetMode(%q) = %q, want it normalized to %q", bad, p.Mode(), ModeQuick)
+		}
+	}
+}
+
+func TestBuildArgsDispatchesOnMode(t *testing.T) {
+	dir := t.TempDir()
+	report := filepath.Join(dir, "report.json")
+
+	quick, err := New().buildArgs(dir, "http://x", report)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !contains(quick, "-quickurl") || contains(quick, "-autorun") {
+		t.Errorf("quick args = %v, want -quickurl and no -autorun", quick)
+	}
+
+	p := New()
+	p.SetMode(ModeFull)
+	full, err := p.buildArgs(dir, "http://x", report)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !contains(full, "-autorun") || contains(full, "-quickurl") {
+		t.Errorf("full args = %v, want -autorun and no -quickurl", full)
+	}
+	// full mode must have written the plan file it points -autorun at.
+	if _, err := os.Stat(filepath.Join(dir, "plan.yaml")); err != nil {
+		t.Errorf("full mode did not write plan.yaml: %v", err)
+	}
+}
+
+// TestFullScanPlanIsInjectionSafe confirms a hostile target can't break
+// out of the plan YAML — it must land as a single quoted scalar, not as
+// extra YAML structure.
+func TestFullScanPlanIsInjectionSafe(t *testing.T) {
+	evil := "http://x\"]}\njobs: []\nenv:\n  bogus: true # "
+	plan := fullScanPlan(evil, "/tmp/out")
+
+	// The whole target should appear as one JSON/YAML-escaped string; the
+	// injected newlines become \n inside that string, so no bare "jobs:"
+	// line the attacker introduced can appear at the start of a line.
+	for _, line := range strings.Split(plan, "\n") {
+		if strings.TrimSpace(line) == "bogus: true" {
+			t.Fatalf("target text escaped into plan structure:\n%s", plan)
+		}
+	}
+	if !strings.Contains(plan, "activeScan") || !strings.Contains(plan, "traditional-json") {
+		t.Errorf("plan missing expected jobs:\n%s", plan)
+	}
+}
+
+func contains(ss []string, want string) bool {
+	for _, s := range ss {
+		if s == want {
+			return true
+		}
+	}
+	return false
+}
+
 func TestResolveBinFallsBackToKnownInstallLocation(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)

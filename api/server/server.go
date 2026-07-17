@@ -34,6 +34,7 @@ import (
 	"github.com/jyotidash/bannin/internal/auth"
 	"github.com/jyotidash/bannin/internal/dashboard"
 	"github.com/jyotidash/bannin/internal/scanrun"
+	"github.com/jyotidash/bannin/pkg/plugin"
 )
 
 // defaultHistoryLimit caps GET /api/v1/history when the caller doesn't
@@ -213,7 +214,13 @@ type scanJob struct {
 	Error     string
 	ReportID  int64
 	StartedAt time.Time
+	Progress  []string // rolling tail of live progress lines from the scanner
 }
+
+// maxProgressLines caps the rolling progress tail kept per job, so a
+// long, chatty scan can't grow a job's memory without bound. The
+// dashboard only shows the most recent activity anyway.
+const maxProgressLines = 40
 
 type scanRequest struct {
 	Target  string   `json:"target"`
@@ -221,11 +228,12 @@ type scanRequest struct {
 }
 
 type scanJobView struct {
-	ID       string `json:"id"`
-	Target   string `json:"target"`
-	Status   string `json:"status"`
-	Error    string `json:"error,omitempty"`
-	ReportID *int64 `json:"report_id,omitempty"`
+	ID       string   `json:"id"`
+	Target   string   `json:"target"`
+	Status   string   `json:"status"`
+	Error    string   `json:"error,omitempty"`
+	ReportID *int64   `json:"report_id,omitempty"`
+	Progress []string `json:"progress,omitempty"`
 }
 
 func (j *scanJob) view() scanJobView {
@@ -234,7 +242,24 @@ func (j *scanJob) view() scanJobView {
 		id := j.ReportID
 		v.ReportID = &id
 	}
+	if len(j.Progress) > 0 {
+		v.Progress = append([]string(nil), j.Progress...) // copy so callers can't mutate job state
+	}
 	return v
+}
+
+// appendProgress records one live progress line on job, keeping only the
+// most recent maxProgressLines. Consecutive duplicate lines (ZAP repeats
+// the same percentage while a phase makes no visible progress) are
+// collapsed so the tail stays informative. Caller must hold jobsMu.
+func (j *scanJob) appendProgress(line string) {
+	if n := len(j.Progress); n > 0 && j.Progress[n-1] == line {
+		return
+	}
+	j.Progress = append(j.Progress, line)
+	if len(j.Progress) > maxProgressLines {
+		j.Progress = j.Progress[len(j.Progress)-maxProgressLines:]
+	}
 }
 
 // handleTriggerScan starts a scan against a caller-supplied target in
@@ -305,6 +330,16 @@ func (s *Server) runScanJob(job *scanJob) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer cancel()
+
+	// Stream the scanner's live progress onto the job so handleScanStatus
+	// can report what's executing, not just "running". The sink fires from
+	// the plugin's goroutine, so it takes jobsMu like every other job
+	// mutation.
+	ctx = plugin.WithProgress(ctx, func(line string) {
+		s.jobsMu.Lock()
+		job.appendProgress(line)
+		s.jobsMu.Unlock()
+	})
 
 	rep, pluginsFailed, err := scanrun.Run(ctx, job.Target, job.Plugins, s.logger)
 

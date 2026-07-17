@@ -126,6 +126,9 @@ export interface ScanJob {
   status: "running" | "done" | "failed";
   error?: string;
   report_id?: number;
+  // Rolling tail of live progress lines from the scanner (e.g. ZAP's
+  // spider/active-scan phases), newest last. Present while running.
+  progress?: string[];
 }
 
 // Triggers an on-demand scan (POST /api/v1/scan). plugins is optional —

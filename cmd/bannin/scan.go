@@ -11,6 +11,7 @@ import (
 	"github.com/jyotidash/bannin/internal/logging"
 	"github.com/jyotidash/bannin/internal/policy"
 	"github.com/jyotidash/bannin/internal/report"
+	"github.com/jyotidash/bannin/internal/scanner"
 	"github.com/jyotidash/bannin/internal/scanrun"
 	"github.com/jyotidash/bannin/internal/storage"
 	"github.com/jyotidash/bannin/pkg/plugin"
@@ -33,6 +34,7 @@ report.output_dir (when "json" is among report.formats).`,
 		if err != nil {
 			return err
 		}
+		applyPluginConfig(scanner.DefaultRegistry, cfg)
 
 		logger, err := logging.New(cfg.Logging.Level, nil)
 		if err != nil {

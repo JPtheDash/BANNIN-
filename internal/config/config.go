@@ -16,11 +16,21 @@ type Config struct {
 	Storage StorageConfig `mapstructure:"storage"`
 	Server  ServerConfig  `mapstructure:"server"`
 	Logging LoggingConfig `mapstructure:"logging"`
+	Zap     ZapConfig     `mapstructure:"zap"`
 }
 
 type ScanConfig struct {
 	Target  string   `mapstructure:"target"`
 	Plugins []string `mapstructure:"plugins"`
+}
+
+// ZapConfig configures the OWASP ZAP (DAST) plugin. Mode selects scan
+// depth: "quick" (the default) is a fast spider + light active scan;
+// "full" drives ZAP's automation framework through the full active-scan
+// policy, probing for injection-class vulnerabilities at the cost of a
+// much longer, more aggressive scan. Empty means quick.
+type ZapConfig struct {
+	Mode string `mapstructure:"mode"`
 }
 
 type ReportConfig struct {
@@ -71,6 +81,10 @@ var validStorageDrivers = map[string]bool{
 
 var validLogLevels = map[string]bool{
 	"debug": true, "info": true, "warn": true, "error": true,
+}
+
+var validZapModes = map[string]bool{
+	"quick": true, "full": true,
 }
 
 // Load reads BANNIN configuration from the given YAML file path, layered
@@ -124,6 +138,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("server.host", "127.0.0.1")
 	v.SetDefault("server.port", 8080)
 	v.SetDefault("logging.level", "info")
+	v.SetDefault("zap.mode", "quick")
 }
 
 // Validate checks that the configured values are within the set BANNIN
@@ -140,6 +155,9 @@ func (c *Config) Validate() error {
 	}
 	if c.Server.Port < 0 || c.Server.Port > 65535 {
 		return fmt.Errorf("config: server.port %d must be between 0 and 65535", c.Server.Port)
+	}
+	if c.Zap.Mode != "" && !validZapModes[c.Zap.Mode] {
+		return fmt.Errorf("config: zap.mode %q must be one of quick, full", c.Zap.Mode)
 	}
 	return nil
 }

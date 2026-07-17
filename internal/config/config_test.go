@@ -94,3 +94,19 @@ func TestValidateRejectsUnknownLogLevel(t *testing.T) {
 		t.Fatal("Validate should reject an unknown logging level")
 	}
 }
+
+func TestValidateRejectsUnknownZapMode(t *testing.T) {
+	cfg := &Config{Zap: ZapConfig{Mode: "aggressive"}}
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("Validate should reject an unknown zap.mode")
+	}
+}
+
+func TestValidateAcceptsKnownZapModes(t *testing.T) {
+	for _, m := range []string{"", "quick", "full"} {
+		cfg := &Config{Zap: ZapConfig{Mode: m}}
+		if err := cfg.Validate(); err != nil {
+			t.Errorf("Validate rejected valid zap.mode %q: %v", m, err)
+		}
+	}
+}

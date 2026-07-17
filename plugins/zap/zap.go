@@ -7,9 +7,11 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -30,23 +32,83 @@ func freePort() (int, error) {
 	return l.Addr().(*net.TCPAddr).Port, nil
 }
 
+// progressWriter tees a process's output stream: everything is appended
+// to capture (for the full diagnostic record), and each complete line is
+// also forwarded to sink (for live progress). ZAP separates lines with
+// both '\n' and '\r' (carriage returns for its in-place progress bars),
+// so both are treated as delimiters and blank lines are dropped, leaving
+// only meaningful updates. sink may be nil, in which case it's pure
+// capture. It's written to from the exec goroutine only, so it needs no
+// locking of its own.
+type progressWriter struct {
+	capture *bytes.Buffer
+	sink    plugin.ProgressFunc
+	partial []byte
+}
+
+func (w *progressWriter) Write(p []byte) (int, error) {
+	w.capture.Write(p)
+	if w.sink == nil {
+		return len(p), nil
+	}
+	w.partial = append(w.partial, p...)
+	for {
+		i := bytes.IndexAny(w.partial, "\r\n")
+		if i < 0 {
+			break
+		}
+		if line := strings.TrimSpace(string(w.partial[:i])); line != "" {
+			w.sink(line)
+		}
+		w.partial = w.partial[i+1:]
+	}
+	return len(p), nil
+}
+
 // Plugin wraps the OWASP ZAP CLI (https://www.zaproxy.org) in headless
 // quick-scan mode. bin is resolved once at construction time and is
 // overridable so tests can substitute a fake binary.
 type Plugin struct {
-	bin string
+	bin  string
+	mode string
 }
 
-// New returns a ZAP plugin that invokes zap.sh, preferring PATH but
-// falling back to the well-known locations install-tools.sh installs
-// to. bannin serve is often started by a process (a background shell,
-// a service manager, an already-running server predating a fresh
+// Scan modes. Quick is a fast spider + light active scan (ZAP's
+// -quickurl); Full drives ZAP's automation framework through a real
+// spider, passive scan, and the full active-scan policy — the mode that
+// actually probes for injection-class vulnerabilities (SQLi, XSS,
+// command injection) rather than surfacing only passive header/config
+// hygiene. Full takes much longer and is far more aggressive against
+// the target.
+const (
+	ModeQuick = "quick"
+	ModeFull  = "full"
+)
+
+// New returns a ZAP plugin in quick mode that invokes zap.sh, preferring
+// PATH but falling back to the well-known locations install-tools.sh
+// installs to. bannin serve is often started by a process (a background
+// shell, a service manager, an already-running server predating a fresh
 // install) that never picked up a PATH update from a shell profile —
 // checking the known install locations directly means ZAP works
 // regardless of that.
 func New() *Plugin {
-	return &Plugin{bin: resolveBin()}
+	return &Plugin{bin: resolveBin(), mode: ModeQuick}
 }
+
+// SetMode selects the scan depth. Anything other than ModeFull (including
+// the empty string) is normalized to ModeQuick, so an unset or bad config
+// value degrades to the safe, fast default rather than erroring.
+func (p *Plugin) SetMode(mode string) {
+	if mode == ModeFull {
+		p.mode = ModeFull
+	} else {
+		p.mode = ModeQuick
+	}
+}
+
+// Mode reports the plugin's current scan mode.
+func (p *Plugin) Mode() string { return p.mode }
 
 func resolveBin() string {
 	const name = "zap.sh"
@@ -88,12 +150,11 @@ func (p *Plugin) HealthCheck(ctx context.Context) error {
 	return nil
 }
 
-// Run performs a headless quick scan of target, which must be a running
-// web application's http(s) URL — ZAP is a dynamic scanner and cannot
-// scan a directory. ZAP writes its JSON report to a file (-quickout)
-// rather than stdout, so Run stages a temp file and returns its
-// contents as the RawResult output; process stdout/stderr are captured
-// as diagnostics.
+// Run performs a headless scan of target, which must be a running web
+// application's http(s) URL — ZAP is a dynamic scanner and cannot scan a
+// directory. In either mode ZAP writes its JSON report to a file rather
+// than stdout, so Run stages a temp file and returns its contents as the
+// RawResult output; process stdout/stderr are captured as diagnostics.
 func (p *Plugin) Run(ctx context.Context, target string) (plugin.RawResult, error) {
 	if !strings.HasPrefix(target, "http://") && !strings.HasPrefix(target, "https://") {
 		return plugin.RawResult{}, fmt.Errorf("zap: target must be a running app's http(s) URL, got %q (directory targets are for the static-analysis plugins)", target)
@@ -106,18 +167,20 @@ func (p *Plugin) Run(ctx context.Context, target string) (plugin.RawResult, erro
 	defer os.RemoveAll(dir)
 	reportPath := filepath.Join(dir, "report.json")
 
-	// Even in -cmd quick-scan mode ZAP starts its local proxy, defaulting
-	// to port 8080 — the same port `bannin serve` typically listens on,
-	// which makes ZAP die with "Address already in use". Give it its own
-	// free port so the two never collide.
-	args := []string{"-cmd", "-quickurl", target, "-quickout", reportPath, "-quickprogress"}
-	if port, err := freePort(); err == nil {
-		args = append(args, "-port", strconv.Itoa(port))
+	args, err := p.buildArgs(dir, target, reportPath)
+	if err != nil {
+		return plugin.RawResult{}, err
 	}
 
 	cmd := exec.CommandContext(ctx, p.bin, args...)
 	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
+	// ZAP streams live progress to stdout (spider/active-scan phases and
+	// percentages), so tee stdout through a line splitter that forwards
+	// each line to the context's progress sink while still capturing the
+	// full output for diagnostics. A scan can run for minutes; this is
+	// what lets the dashboard show what's executing instead of just
+	// "running".
+	cmd.Stdout = &progressWriter{capture: &stdout, sink: plugin.Progress(ctx)}
 	cmd.Stderr = &stderr
 
 	exitCode := 0
@@ -138,6 +201,106 @@ func (p *Plugin) Run(ctx context.Context, target string) (plugin.RawResult, erro
 		return plugin.RawResult{Stderr: diag, ExitCode: exitCode}, nil
 	}
 	return plugin.RawResult{Output: report, Stderr: diag, ExitCode: exitCode}, nil
+}
+
+// buildArgs assembles the zap.sh arguments for the plugin's mode, both
+// producing their JSON report at reportPath. Full mode writes an
+// automation-framework plan into dir and runs it; quick mode uses
+// -quickurl. Either way ZAP starts a local proxy that defaults to port
+// 8080 — the same port `bannin serve` typically uses — so both get an
+// OS-assigned free port via -port to avoid "Address already in use".
+func (p *Plugin) buildArgs(dir, target, reportPath string) ([]string, error) {
+	var args []string
+	switch p.mode {
+	case ModeFull:
+		planPath := filepath.Join(dir, "plan.yaml")
+		if err := os.WriteFile(planPath, []byte(fullScanPlan(target, dir)), 0o600); err != nil {
+			return nil, fmt.Errorf("zap: writing scan plan: %w", err)
+		}
+		args = []string{"-cmd", "-autorun", planPath}
+	default:
+		args = []string{"-cmd", "-quickurl", target, "-quickout", reportPath, "-quickprogress"}
+	}
+	if port, err := freePort(); err == nil {
+		args = append(args, "-port", strconv.Itoa(port))
+	}
+	return args, nil
+}
+
+// fullScanPlan renders a ZAP automation-framework plan: spider the
+// target, wait for passive scanning to drain, run the full active-scan
+// policy, then emit a traditional-json report to dir/report.json (the
+// report job appends .json to reportFile). target and dir are
+// JSON-encoded so a hostile URL or path can't break out of the YAML —
+// any JSON scalar is valid YAML.
+//
+// The context is scoped by includePaths to the target's host on any
+// port, not just the exact start URL. Without that, the automation
+// spider stays on the single start URL's host:port and never follows
+// links to sibling apps the same host serves on other ports — so the
+// active scan never reaches them. (ZAP's -quickurl traditional spider
+// crawls those by default, which is why quick mode can actually reach
+// more of a multi-port target than a naively-scoped full scan.)
+//
+// The spider and active scan are time-bounded (see the max* parameters)
+// so the plan always finishes and writes its report well within the
+// caller's scan timeout. A broad target can spider into hundreds of
+// URLs; an unbounded active scan of all of them can run for hours and
+// then get killed by the timeout mid-flight, writing no report at all —
+// bounded, it returns real (if not exhaustive) results every time.
+func fullScanPlan(target, dir string) string {
+	t := jsonString(target)
+	d := jsonString(dir)
+	scope := jsonString(scopeRegex(target))
+	return `env:
+  contexts:
+    - name: bannin
+      urls: [` + t + `]
+      includePaths:
+        - ` + scope + `
+  parameters:
+    progressToStdout: true
+jobs:
+  - type: spider
+    parameters:
+      context: bannin
+      url: ` + t + `
+      maxDuration: 5
+  - type: passiveScan-wait
+    parameters:
+      maxDuration: 5
+  - type: activeScan
+    parameters:
+      context: bannin
+      maxScanDurationInMins: 20
+      maxRuleDurationInMins: 3
+  - type: report
+    parameters:
+      template: traditional-json
+      reportDir: ` + d + `
+      reportFile: report
+`
+}
+
+// scopeRegex builds a ZAP includePaths regex matching the target's host
+// on any port (and any path) — broad enough to crawl sibling apps the
+// host serves on other ports, but still confined to that one host so the
+// active scanner never attacks anything else. It intentionally does not
+// widen to subdomains. A target that won't parse falls back to ".*",
+// preserving the previous (unscoped) behavior rather than erroring.
+func scopeRegex(target string) string {
+	u, err := url.Parse(target)
+	if err != nil || u.Hostname() == "" {
+		return ".*"
+	}
+	return `https?://` + regexp.QuoteMeta(u.Hostname()) + `(:[0-9]+)?/.*`
+}
+
+// jsonString renders s as a JSON string literal (which is also a valid
+// YAML scalar), used to safely embed untrusted values in the plan YAML.
+func jsonString(s string) string {
+	b, _ := json.Marshal(s)
+	return string(b)
 }
 
 // Parse decodes ZAP's JSON report into normalized Findings, one per
